@@ -1,22 +1,28 @@
+"""Satın Alma Modülü'nün hata sınıfları.
+
+Bütün hatalar SatinAlmaError'dan türer; menü tek bir
+except SatinAlmaError ile hepsini yakalayabilir.
+"""
+
+
 class SatinAlmaError(Exception):
-    """Projenin bütün hatalarının atası; doğrudan raise edilmez"""
+    """Projenin bütün hatalarının atası; doğrudan raise edilmez."""
 
 
 class GecersizGirisError(SatinAlmaError):
-    """Girilen değer geçersiz ya da eksik"""
+    """Girilen değer geçersiz ya da eksik."""
 
 
 class KayitBulunamadiError(SatinAlmaError):
-    """Girilen numarayla kayıt yok"""
+    """Girilen numarayla kayıt yok."""
 
 
 class IslemYapilamazError(SatinAlmaError):
-    """Kayıt var ama durumu ya da kural bu işleme izin vermiyor"""
+    """Kayıt var ama durumu ya da kural bu işleme izin vermiyor."""
 
 
 class DepolamaError(SatinAlmaError):
-    """Veri dosyası okunamadı ya da yazılamadı"""
-
+    """Veri dosyası okunamadı ya da yazılamadı."""
 
 
 if __name__ == "__main__":
@@ -26,6 +32,4 @@ if __name__ == "__main__":
         print(f"Yakalanan hata: {hata}")
         print(hata)
         print(type(hata))
-
-
-    
+        

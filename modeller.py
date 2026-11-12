@@ -19,8 +19,18 @@ FATURA_DURUM_GECISLERI = {
 
 @dataclass
 class Tedarikci:
-    tedarikci_kodu: str 
-    tedarikci_adi: str 
+    """Tedarikçi ana verisi (iş ortağı kartı).
+
+    Belge değil, ana veridir; bu yüzden kayit_tarihi ve durum alanı yoktur.
+
+    Attributes:
+        tedarikci_kodu: Sistemin verdiği kod, ör. "TED-0001".
+        tedarikci_adi: Listede görünen kısa ad, ör. "ABC Kırtasiye".
+        firma_adi: Resmi unvan; isteğe bağlı, verilmezse None.
+    """
+
+    tedarikci_kodu: str
+    tedarikci_adi: str
     firma_adi: str | None = None
 
 
