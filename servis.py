@@ -7,7 +7,7 @@ from depolama import kaydet, yukle
 from eslestirme import KovaSonucu, kovalara_ayir, kurallari_uygula
 from hatalar import GecersizGirisError, IslemYapilamazError, KayitBulunamadiError
 from modeller import (MalKabul, MalKabulKalemi, Siparis, SiparisKalemi,
-                      Tedarikci, ToleransKopyasi,FaturaKalemi,Fatura,MalKabulDagitimi)
+                      Tedarikci, ToleransKopyasi,FaturaKalemi,Fatura,MalKabulDagitimi,NedenliMiktar)
 from para import net_fiyat_hesapla                                               
 
 
@@ -358,13 +358,18 @@ class SatinAlmaServisi:
                 net_birim_fiyat=fiyat_hesapla,
                 tir_kapida=tir_kapida,
             )
+            kapida_redler = kova.kapida_redler
+            if yanlis_urun_miktari > 0:
+                kapida_redler = kapida_redler + [NedenliMiktar(neden='YANLIS_URUN', miktar=yanlis_urun_miktari)] 
+
             mal_kabul_kalemi = MalKabulKalemi(
                 kalem_no=kalem_no,
                 siparis_kalem_no=kalem["siparis_kalem_no"],
                 kabul_edilen_miktar=kova.kabul,
-                karantina_miktari=kova.karantina,
-                kapida_reddedilen_miktar=kova.kapida_red + yanlis_urun_miktari,
+                karantinalar=kova.karantinalar,
+                kapida_redler=kapida_redler,
             )
+
             mal_kabul_kalemleri.append(mal_kabul_kalemi)
             kova_sonuclari[kalem["siparis_kalem_no"]] = kova
             kalem_no += KALEM_NO_ARTISI

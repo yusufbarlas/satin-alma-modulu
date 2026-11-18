@@ -1,9 +1,11 @@
+import json
 from decimal import Decimal
 
 from ayarlar import TEST_VERI_DOSYASI
-from depolama import kaydet, bos_veri_olustur
-from servis import SatinAlmaServisi
+from depolama import bos_veri_olustur, kaydet
+from hatalar import DepolamaError
 from modeller import ToleransKopyasi
+from servis import SatinAlmaServisi
 
 
 def baslangic_verisini_kur():
@@ -169,6 +171,415 @@ def senaryo_a1():
     return sonuc
 
 
+def senaryo_b1():
+    """B1 — tam sınırda geçer: izin 2 TL, fatura 102,00 onaylanır (E33).
+
+    Sınır dahildir: fiyat tam sınırdaysa fatura bloke olmaz.
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0001", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("102.00")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "ONAYLANDI"
+            and kaydedilen_fatura.bloke_neden_kodlari == []):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B1 tam sınırda geçer: {sonuc}")
+    return sonuc
+
+
+def senaryo_b2():
+    """B2 — 1 kuruş üstü: izin 2 TL, fatura 102,01 → FIYAT_YUKSEK (E33).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0001", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("102.01")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "BLOKE"
+            and kaydedilen_fatura.bloke_neden_kodlari == ["FIYAT_YUKSEK"]):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B2 1 kuruş üstü: {sonuc}")
+    return sonuc
+
+
+def senaryo_b3():
+    """B3 — düşük fiyat: izin 2 TL, fatura 97,99 → FIYAT_DUSUK (E29, E39).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0001", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("97.99")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "BLOKE"
+            and kaydedilen_fatura.bloke_neden_kodlari == ["FIYAT_DUSUK"]):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B3 düşük fiyat: {sonuc}")
+    return sonuc
+
+
+def senaryo_b4():
+    """B4 — küçük fark eşiği kurtarır: net 0,45, fatura 0,46 (E40).
+
+    Yüzde izni 0,009; eşik 10 TL ÷ 1.000 = 0,01 → izin 0,01, onaylanır.
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0004", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("1000")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0004", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("1000"),
+         "birim_fiyat": Decimal("0.46")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "ONAYLANDI"
+            and kaydedilen_fatura.bloke_neden_kodlari == []):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B4 küçük fark eşiği: {sonuc}")
+    return sonuc
+
+
+def senaryo_b5():
+    """B5 — TL tavanı belirler: izin 50 TL ÷ 5 = 10, fatura 10.011 (E33).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0003", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("5")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0003", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("5"),
+         "birim_fiyat": Decimal("10011")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "BLOKE"
+            and kaydedilen_fatura.bloke_neden_kodlari == ["FIYAT_YUKSEK"]):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B5 TL tavanı: {sonuc}")
+    return sonuc
+
+def senaryo_b6():
+    """B6 — tanımsız sınır: fiyat alt sınırı boşsa alta bakılmaz.
+
+    SARF test toleransı, fiyat alt sınırının iki sınırı boş (None).
+    100 TL'lik kaleme 90 TL fatura gelir; onaylanır (E29, Karar 2c).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    alt_siniri_bos_tolerans = ToleransKopyasi(
+        fazla_teslimat_yuzde=Decimal("10"),
+        fazla_teslimat_tl=Decimal("500"),
+        asiri_sinir_yuzde=Decimal("30"),
+        asiri_sinir_tl=Decimal("2000"),
+        fiyat_ust_yuzde=Decimal("2"),
+        fiyat_ust_tl=Decimal("100"),
+        fiyat_alt_yuzde=None,
+        fiyat_alt_tl=None,
+        kucuk_fark_esigi=Decimal("10"),
+    )
+    siparis = servis.siparis_ac("TED-0001", [
+        {"malzeme_adi": "A4 kağıt", "miktar": Decimal("10"), "birim": "adet",
+         "birim_fiyat": Decimal("100"), "kategori": "SARF"},
+    ], tolerans=alt_siniri_bos_tolerans, tarih=test_tarihi)
+    servis.siparis_onayla(siparis.siparis_no)
+    servis.mal_kabul_kaydet(siparis.siparis_no, [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet(siparis.siparis_no, "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("90")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "ONAYLANDI"
+            and kaydedilen_fatura.bloke_neden_kodlari == []):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B6 tanımsız sınır: {sonuc}")
+    return sonuc
+
+
+
+def senaryo_b7():
+    """B7 — net fiyat karşılaştırması: sipariş 0,50 − %10 = 0,45 (E30).
+
+    Fatura iskontosuz 0,45; net fiyatlar eşit, onaylanır.
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0004", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("1000")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0004", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("1000"),
+         "birim_fiyat": Decimal("0.45")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "ONAYLANDI"
+            and kaydedilen_fatura.bloke_neden_kodlari == []):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B7 net fiyat: {sonuc}")
+    return sonuc
+
+
+def senaryo_b8():
+    """B8 — ayar değişti, eski sipariş: kalemdeki tolerans kopyası geçer.
+
+    SAS-0001 %2 kopyayla açıldı; fatura 101,50 onaylanır. Aynı fatura,
+    üst sınırı %1'e indirilmiş yeni bir siparişte bloke olur (Karar 1b, E47).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+    eski_fatura = servis.fatura_kaydet("SAS-0001", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("101.50")},
+    ], tarih=test_tarihi)
+
+    yeni_tolerans = ToleransKopyasi(
+        fazla_teslimat_yuzde=Decimal("10"),
+        fazla_teslimat_tl=Decimal("500"),
+        asiri_sinir_yuzde=Decimal("30"),
+        asiri_sinir_tl=Decimal("2000"),
+        fiyat_ust_yuzde=Decimal("1"),
+        fiyat_ust_tl=Decimal("100"),
+        fiyat_alt_yuzde=Decimal("2"),
+        fiyat_alt_tl=Decimal("100"),
+        kucuk_fark_esigi=Decimal("10"),
+    )
+    yeni_siparis = servis.siparis_ac("TED-0001", [
+        {"malzeme_adi": "A4 kağıt", "miktar": Decimal("10"), "birim": "adet",
+         "birim_fiyat": Decimal("100"), "kategori": "SARF"},
+    ], tolerans=yeni_tolerans, tarih=test_tarihi)
+    servis.siparis_onayla(yeni_siparis.siparis_no)
+    servis.mal_kabul_kaydet(yeni_siparis.siparis_no, [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+    yeni_fatura = servis.fatura_kaydet(yeni_siparis.siparis_no, "F-1002", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("101.50")},
+    ], tarih=test_tarihi)
+
+    if (eski_fatura.durum == "ONAYLANDI"
+            and yeni_fatura.durum == "BLOKE"
+            and yeni_fatura.bloke_neden_kodlari == ["FIYAT_YUKSEK"]):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B8 eski ayarlı sipariş: {sonuc}")
+    return sonuc
+
+
+def senaryo_b9():
+    """B9 — kalem yer değiştirme: k10 250, k20 100 faturalanır (E29).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+        {"siparis_kalem_no": 20, "gelen_miktar": Decimal("4")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0001", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("250")},
+        {"siparis_kalem_no": 20, "miktar": Decimal("4"),
+         "birim_fiyat": Decimal("100")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "BLOKE"
+            and kaydedilen_fatura.bloke_neden_kodlari
+            == ["FIYAT_YUKSEK", "FIYAT_DUSUK"]):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B9 kalem yer değiştirme: {sonuc}")
+    return sonuc
+
+
+def senaryo_b10():
+    """B10 — tek yuvarlama: 3 × 33,33, ORAN %7 → tutar 92,99 (E35).
+
+    Ara yuvarlama yapılsaydı 93,00 çıkardı.
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0005", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("3")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0005", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("3"),
+         "birim_fiyat": Decimal("33.33"),
+         "iskonto_turu": "ORAN", "iskonto_degeri": Decimal("7")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "ONAYLANDI"
+            and kaydedilen_fatura.fatura_kalemleri[0].tutar()
+            == Decimal("92.99")):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B10 tek yuvarlama: {sonuc}")
+    return sonuc
+
+
+def senaryo_b11():
+    """B11 — alt sınır 0 ≠ tanımsız: 0 hiç izin yok demektir.
+
+    STRATEJIK test toleransı, fiyat alt sınırı %0 ve 0 TL. İzin küçük fark
+    eşiğine çıkar (10 ÷ 5 = 2); 9.997 < 9.998 → FIYAT_DUSUK. Alt sınır
+    tanımsız olsaydı onaylanırdı (B6) (E29, E40, Karar 2c).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    servis = baslangic_verisini_kur()
+    test_tarihi = "2026-11-02"
+    sifir_alt_tolerans = ToleransKopyasi(
+        fazla_teslimat_yuzde=Decimal("2"),
+        fazla_teslimat_tl=Decimal("1000"),
+        asiri_sinir_yuzde=Decimal("5"),
+        asiri_sinir_tl=Decimal("5000"),
+        fiyat_ust_yuzde=Decimal("1"),
+        fiyat_ust_tl=Decimal("50"),
+        fiyat_alt_yuzde=Decimal("0"),
+        fiyat_alt_tl=Decimal("0"),
+        kucuk_fark_esigi=Decimal("10"),
+    )
+    siparis = servis.siparis_ac("TED-0002", [
+        {"malzeme_adi": "Dizüstü bilgisayar", "miktar": Decimal("5"),
+         "birim": "adet", "birim_fiyat": Decimal("10000"),
+         "kategori": "STRATEJIK"},
+    ], tolerans=sifir_alt_tolerans, tarih=test_tarihi)
+    servis.siparis_onayla(siparis.siparis_no)
+    servis.mal_kabul_kaydet(siparis.siparis_no, [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("5")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet(siparis.siparis_no, "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("5"),
+         "birim_fiyat": Decimal("9997")},
+    ], tarih=test_tarihi)
+
+    if (kaydedilen_fatura.durum == "BLOKE"
+            and kaydedilen_fatura.bloke_neden_kodlari == ["FIYAT_DUSUK"]):
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"B11 alt sınır 0: {sonuc}")
+    return sonuc
+
+
+def senaryo_f2():
+    """F2 — bozuk dosya: program asla boş başlamaz, veri kaybolmaz.
+
+    Test dosyasına JSON olmayan bir metin yazılır, servis bu dosyayla
+    açılmaya çalışılır. DepolamaError gelmeli ve dosyanın üstüne
+    yazılmamış olmalı (10a, E61).
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    bozuk_metin = "{bozuk}"
+    with open(TEST_VERI_DOSYASI, "w", encoding="utf-8") as dosya:
+        dosya.write(bozuk_metin)
+    try:
+        SatinAlmaServisi(TEST_VERI_DOSYASI)
+        hata_geldi = False
+    except DepolamaError:
+        hata_geldi = True
+    with open(TEST_VERI_DOSYASI, "r", encoding="utf-8") as dosya:
+        icerik = dosya.read()
+
+    if hata_geldi and icerik == bozuk_metin:
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"F2 bozuk dosya: {sonuc}")
+    return sonuc
+
+
+def senaryo_f3():
+    """F3 — veri sürümü: kaydedilen dosyada "veri_surumu": 1 yazar (R5).
+
+    Ortak test verisi kurulur (her işlem dosyaya kaydedilir), sonra
+    dosya doğrudan JSON olarak okunur.
+
+    Returns:
+        "GEÇTİ" ya da "KALDI".
+    """
+    baslangic_verisini_kur()
+    with open(TEST_VERI_DOSYASI, "r", encoding="utf-8") as dosya:
+        ham_veri = json.load(dosya)
+
+    if ham_veri["veri_surumu"] == 1:
+        sonuc = "GEÇTİ"
+    else:
+        sonuc = "KALDI"
+    print(f"F3 veri sürümü: {sonuc}")
+    return sonuc
+
+
+
+
 def senaryolari_calistir():
     """Bütün senaryoları sırayla çalıştırır ve sonunda özet yazar.
 
@@ -176,7 +587,10 @@ def senaryolari_calistir():
     bu fonksiyon dönen sonuçları sayar (E54). Yeni senaryo listeye
     parantezsiz eklenir.
     """
-    senaryolar = [senaryo_a1, senaryo_f1]
+    senaryolar = [senaryo_a1, senaryo_b1, senaryo_b2, senaryo_b3, senaryo_b4,
+                  senaryo_b5, senaryo_b6, senaryo_b7, senaryo_b8, senaryo_b9,
+                  senaryo_b10, senaryo_b11,
+                  senaryo_f1, senaryo_f2, senaryo_f3]
     gecenler = 0
     kalanler = 0
     for senaryo in senaryolar:

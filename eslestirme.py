@@ -6,9 +6,10 @@ ekrana yazmaz, dosyaya dokunmaz.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from decimal import Decimal,ROUND_DOWN
+from decimal import ROUND_DOWN, Decimal
 
 from para import net_fiyat_hesapla
+from modeller import NedenliMiktar
 
 
 @dataclass
@@ -194,8 +195,9 @@ class FiyatKurali(EslestirmeKurali):
     """Fatura net fiyatı ile sipariş net fiyatını karşılaştırır.
 
     Fatura pahalıysa FIYAT_YUKSEK, ucuzsa FIYAT_DUSUK verir. Üst ve
-    alt sınır ayrı hesaplanır; tanımsız (None) sınıra bakılmaz.
-    Sınır dahildir: tam sınırdaki fiyat geçer.
+    alt sınır ayrı hesaplanır. Boş üst sınır otomatik onay vermez
+    (izin 0); boş alt sınıra bakılmaz (E111). Sınır dahildir: tam
+    sınırdaki fiyat geçer.
     """
 
     def kontrol_et(self, siparis_kalemi, fatura_kalemi,
@@ -206,6 +208,8 @@ class FiyatKurali(EslestirmeKurali):
         Değerler sipariş kaleminin tolerans kopyasından okunur; TL
         tavanı ve eşik fatura kalemi miktarına bölünür. Net fiyatlar
         yuvarlanmaz. kabul_toplami ve faturalanan_toplam kullanılmaz.
+        Üst sınırın iki sınırı da boşsa izin 0 olur, sadece eşik
+        geçerlidir; alt sınırın iki sınırı da boşsa alta bakılmaz (E111).
 
         Returns:
             Sapma varsa tek Bulgu'lu liste, yoksa boş liste.
@@ -238,12 +242,14 @@ class FiyatKurali(EslestirmeKurali):
 
         izin, sinir = en_kucuk_siniri_bul(
             {"YUZDE": yuzde_izni, "TL_TAVANI": tl_izni})
+        if izin is None:
+            izin = Decimal("0")
 
-        if (izin is not None) and (izin < esik_izni):
+        if izin < esik_izni:
             izin = esik_izni
             sinir = "KUCUK_FARK"
 
-        if (izin is not None) and (fatura_net > siparis_net + izin):
+        if fatura_net > siparis_net + izin:
             bulgular.append(Bulgu(
                 kalem_no=fatura_kalemi.kalem_no,
                 neden_kodu="FIYAT_YUKSEK",
@@ -282,7 +288,7 @@ class FiyatKurali(EslestirmeKurali):
             ))
 
         return bulgular
-
+    
 def kurallari_uygula(siparis, fatura, kabul_toplamlari,
                      faturalanan_toplamlar):
     """Faturanın her kalemini bütün kurallardan geçirir.
@@ -333,104 +339,116 @@ class KovaSonucu:
 
     Attributes:
         kabul: Depoya kabul edilen miktar.
-        karantina: Karar bekleyen fazla miktar.
-        kapida_red: Kapıda geri çevrilen miktar.
+        karantinalar: Karar bekleyen fazla, nedenine göre
+            (KARAR_BEKLIYOR, IADE_BEKLIYOR). Yoksa boş liste.
+        kapida_redler: Kapıda geri çevrilen fazla, nedenine göre
+            (ASIRI_TESLIMAT). Yoksa boş liste.
         belirleyici_sinir: Tolerans eşiğini belirleyen sınır:
             "YUZDE", "TL_TAVANI" veya "MIKTAR_TAVANI". Fazla
             teslimat yoksa ya da tolerans tanımsızsa None.
     """
 
     kabul: Decimal
-    karantina: Decimal
-    kapida_red: Decimal
+    karantinalar: list[NedenliMiktar]
+    kapida_redler: list[NedenliMiktar]
     belirleyici_sinir: str | None
 
 
-def kovalara_ayir(siparis_miktari, gelen_miktar, tolerans, miktar_tavani, birim, net_birim_fiyat, tir_kapida):
+def kovalara_ayir(siparis_miktari, gelen_miktar, tolerans, miktar_tavani,
+                  birim, net_birim_fiyat, tir_kapida):
+    """Gelen miktarı kabul, karantina ve kapıda red kovalarına ayırır.
+
+    Fazla teslimat üç basamakta ayrılır: tolerans iznine kadar kabul,
+    izinden aşırı sınıra kadar karantina (KARAR_BEKLIYOR), aşırı sınırın
+    üstü tır kapıdaysa kapıda red (ASIRI_TESLIMAT), tır gittiyse
+    karantina (IADE_BEKLIYOR). İzin ve aşırı sınır, tanımlı sınırların
+    en küçüğüdür; "adet" biriminde aşağı yuvarlanır. Miktarı 0 olan
+    eleman listeye eklenmez.
+
+    Boş sınır kuralı (E111): tolerans sınırlarının hepsi boşsa izin 0;
+    aşırı sınırın iki sınırı da boşsa aşırı sınıra bakılmaz (toleransı
+    aşan her şey karantinaya); aşırı sınır izinden küçükse ikisinin
+    büyüğü alınır.
+
+    Args:
+        siparis_miktari: Sipariş kalemindeki miktar (Decimal).
+        gelen_miktar: Kapıya gelen doğru ürün miktarı (Decimal).
+        tolerans: Sipariş kaleminin tolerans kopyası (ToleransKopyasi).
+        miktar_tavani: Fazla teslimat miktar tavanı (Decimal ya da None).
+        birim: Kalemin birimi, küçük harf ("adet", "kg").
+        net_birim_fiyat: Sipariş net birim fiyatı; TL sınırlarını
+            miktara çevirmek için kullanılır (Decimal).
+        tir_kapida: Tır kapıdaysa True, gittiyse False.
+
+    Returns:
+        KovaSonucu. Fazla yoksa iki liste boş, belirleyici_sinir None.
+    """
     if gelen_miktar <= siparis_miktari:
-        kova_sonucu = KovaSonucu(kabul=gelen_miktar , karantina=Decimal("0") , kapida_red=Decimal("0") , belirleyici_sinir=None) 
-        return kova_sonucu
+        return KovaSonucu(kabul=gelen_miktar, karantinalar=[],
+                          kapida_redler=[], belirleyici_sinir=None)
 
+    # Tolerans izni: otomatik kabul edilen fazla
     if tolerans.fazla_teslimat_yuzde is None:
-        yuzde = None
-    else :
-        yuzde = tolerans.fazla_teslimat_yuzde / 100 * siparis_miktari
-
+        yuzde_izni = None
+    else:
+        yuzde_izni = tolerans.fazla_teslimat_yuzde / 100 * siparis_miktari
     if tolerans.fazla_teslimat_tl is None:
-        tl = None
-    else :
-        tl = tolerans.fazla_teslimat_tl / net_birim_fiyat
-
-    if miktar_tavani is None:
-        tavan_miktari = None
-    else : 
-        tavan_miktari = miktar_tavani
-
-    izin , sinir = en_kucuk_siniri_bul({"YUZDE": yuzde , "TL_TAVANI": tl , "MIKTAR_TAVANI":tavan_miktari})
-    
-
+        tl_izni = None
+    else:
+        tl_izni = tolerans.fazla_teslimat_tl / net_birim_fiyat
+    izin, sinir = en_kucuk_siniri_bul({"YUZDE": yuzde_izni,
+                                       "TL_TAVANI": tl_izni,
+                                       "MIKTAR_TAVANI": miktar_tavani})
+    if izin is None:
+        izin = Decimal("0")
     if birim == "adet":
         izin = izin.quantize(Decimal("1"), rounding=ROUND_DOWN)
-    print(izin , sinir)
 
+    # Aşırı sınır: karantinaya alınabilecek en büyük fazla
     if tolerans.asiri_sinir_yuzde is None:
         yuzde_siniri = None
-    else :
-         yuzde_siniri = tolerans.asiri_sinir_yuzde / 100 * siparis_miktari
-
+    else:
+        yuzde_siniri = tolerans.asiri_sinir_yuzde / 100 * siparis_miktari
     if tolerans.asiri_sinir_tl is None:
         tl_siniri = None
-    else :
+    else:
         tl_siniri = tolerans.asiri_sinir_tl / net_birim_fiyat
+    asiri_sinir, _ = en_kucuk_siniri_bul({"YUZDE": yuzde_siniri,
+                                          "TL_TAVANI": tl_siniri})
+    if asiri_sinir is not None:
+        if birim == "adet":
+            asiri_sinir = asiri_sinir.quantize(Decimal("1"),
+                                               rounding=ROUND_DOWN)
+        asiri_sinir = max(asiri_sinir, izin)
 
-    asiri_sinir , _sinir = en_kucuk_siniri_bul({"YUZDE": yuzde_siniri , "TL_TAVANI": tl_siniri})
-    if birim == "adet":
-            asiri_sinir = asiri_sinir.quantize(Decimal("1"), rounding=ROUND_DOWN)
-    print(asiri_sinir , _sinir)
-
-  
-    fazla_miktar_sayisi = gelen_miktar - siparis_miktari
-    if fazla_miktar_sayisi < izin:
-        kabul_edilen_fazla = fazla_miktar_sayisi
+    # Üç kova
+    fazla = gelen_miktar - siparis_miktari
+    kabul_edilen_fazla = min(fazla, izin)
+    if asiri_sinir is None:
+        asiri_alti = fazla
     else:
-        kabul_edilen_fazla = izin
+        asiri_alti = min(fazla, asiri_sinir)
+    karar_bekleyen = asiri_alti - kabul_edilen_fazla
+    asiri_fazla = fazla - asiri_alti
 
-    kabul = siparis_miktari + kabul_edilen_fazla
+    karantinalar = []
+    kapida_redler = []
+    if karar_bekleyen > 0:
+        karantinalar.append(NedenliMiktar("KARAR_BEKLIYOR", karar_bekleyen))
+    if asiri_fazla > 0:
+        if tir_kapida:
+            kapida_redler.append(NedenliMiktar("ASIRI_TESLIMAT", asiri_fazla))
+        else:
+            karantinalar.append(NedenliMiktar("IADE_BEKLIYOR", asiri_fazla))
 
-    if fazla_miktar_sayisi >  asiri_sinir:
-        kabul_edilen_sinir = asiri_sinir
-    else :
-        kabul_edilen_sinir = fazla_miktar_sayisi
-
-    karantina_kabul = kabul_edilen_sinir - kabul_edilen_fazla
-
-    
-    fazlalik_gönder = fazla_miktar_sayisi - kabul_edilen_sinir
-    
-    if tir_kapida == True:
-       kapida_red = fazlalik_gönder
-    else:
-        karantina_kabul += fazlalik_gönder
-        kapida_red = 0 
-
-    kova_sonucu = KovaSonucu(kabul=kabul , karantina=karantina_kabul , kapida_red=kapida_red , belirleyici_sinir=sinir)
-    return kova_sonucu
-
-    
-
+    return KovaSonucu(kabul=siparis_miktari + kabul_edilen_fazla,
+                      karantinalar=karantinalar,
+                      kapida_redler=kapida_redler,
+                      belirleyici_sinir=sinir)
     
 
 
 
-
-        
-
-    
-        
-
-
-    
-       
 if __name__ == "__main__":
     from modeller import (
         MalKabulDagitimi, FaturaKalemi, SiparisKalemi, ToleransKopyasi,Siparis,Fatura
@@ -533,8 +551,7 @@ if __name__ == "__main__":
     print(kabul_toplamlari[10])
     print(kurallari_uygula(siparis, fatura, kabul_toplamlari, faturalanan_toplamlar))
 
-    KS= KovaSonucu(kabul=Decimal("110") , karantina=Decimal("15") , kapida_red=Decimal("5") , belirleyici_sinir="YUZDE")
-    print(KS)
+    
    
     sonuc = kovalara_ayir(Decimal("100"), Decimal("100"), tolerans, None, "ADET", Decimal("50"), True)
     print(sonuc)
@@ -549,3 +566,63 @@ if __name__ == "__main__":
     KA3 = kovalara_ayir(Decimal("100"), Decimal("105"), tolerans, None, "adet", Decimal("50"), True)
     print(KA2)
     print(KA3)
+
+    
+    # --- E111: boş sınır denemeleri (100 sipariş, 130 geldi, fiyat 50) ---
+    tolerans_bos = ToleransKopyasi(
+        fazla_teslimat_yuzde=None,
+        fazla_teslimat_tl=None,
+        asiri_sinir_yuzde=Decimal("25"),
+        asiri_sinir_tl=Decimal("5000"),
+        fiyat_ust_yuzde=None,
+        fiyat_ust_tl=None,
+        fiyat_alt_yuzde=Decimal("10"),
+        fiyat_alt_tl=Decimal("1000"),
+        kucuk_fark_esigi=Decimal("10"),
+    )
+    asiri_bos = ToleransKopyasi(
+        fazla_teslimat_yuzde=Decimal("10"),
+        fazla_teslimat_tl=Decimal("1000"),
+        asiri_sinir_yuzde=None,
+        asiri_sinir_tl=None,
+        fiyat_ust_yuzde=Decimal("5"),
+        fiyat_ust_tl=Decimal("500"),
+        fiyat_alt_yuzde=None,
+        fiyat_alt_tl=None,
+        kucuk_fark_esigi=Decimal("10"),
+    )
+    asiri_kucuk = ToleransKopyasi(
+        fazla_teslimat_yuzde=Decimal("10"),
+        fazla_teslimat_tl=Decimal("1000"),
+        asiri_sinir_yuzde=Decimal("5"),
+        asiri_sinir_tl=None,
+        fiyat_ust_yuzde=Decimal("5"),
+        fiyat_ust_tl=Decimal("500"),
+        fiyat_alt_yuzde=Decimal("10"),
+        fiyat_alt_tl=Decimal("1000"),
+        kucuk_fark_esigi=Decimal("10"),
+    )
+
+    # Kural 1: tolerans boş → izin 0
+    print(kovalara_ayir(Decimal("100"), Decimal("130"), tolerans_bos, None, "adet", Decimal("50"), True))
+    # kabul 100 · [KARAR_BEKLIYOR 25] · [ASIRI_TESLIMAT 5] · None
+
+    # Kural 2: aşırı sınır boş → bakılmaz, fazla karantinaya
+    print(kovalara_ayir(Decimal("100"), Decimal("130"), asiri_bos, None, "adet", Decimal("50"), True))
+    # kabul 110 · [KARAR_BEKLIYOR 20] · [] · YUZDE
+
+    # Kural 3: aşırı sınır < izin → ikisinin büyüğü
+    print(kovalara_ayir(Decimal("100"), Decimal("130"), asiri_kucuk, None, "adet", Decimal("50"), True))
+    # kabul 110 · [] · [ASIRI_TESLIMAT 20] · YUZDE
+
+    # Fiyat üst sınırı boş → izin 0, sadece küçük fark eşiği
+    SK_bos = SiparisKalemi(10, "A4 Kagit", Decimal("100"), "adet", Decimal("50"), "SARF", tolerans_bos)
+    print(fiyat_kurali.kontrol_et(SK_bos, FaturaKalemi(10, 10, Decimal("100"), Decimal("50.10"), []), Decimal("0"), Decimal("0")))
+    # []  (sınırda, geçer)
+    print(fiyat_kurali.kontrol_et(SK_bos, FaturaKalemi(10, 10, Decimal("100"), Decimal("52"), []), Decimal("0"), Decimal("0")))
+    # FIYAT_YUKSEK, izin 0.1, KUCUK_FARK
+
+    # Fiyat alt sınırı boş → bakılmaz
+    SK_alt_bos = SiparisKalemi(10, "A4 Kagit", Decimal("100"), "adet", Decimal("50"), "SARF", asiri_bos)
+    print(fiyat_kurali.kontrol_et(SK_alt_bos, FaturaKalemi(10, 10, Decimal("100"), Decimal("40"), []), Decimal("0"), Decimal("0")))
+    # []

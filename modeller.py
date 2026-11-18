@@ -199,17 +199,69 @@ class Siparis:
             )
         self.durum = yeni_durum
 
+@dataclass
+class NedenliMiktar:
+    """Karantina ya da kapıda red için bir neden ve miktarı (E110).
+
+    MalKabulKalemi'nin karantinalar / kapida_redler listelerinin elemanı;
+    MalKabulDagitimi ile aynı kalıp.
+
+    Attributes:
+        neden: Neden kodu (KARANTINA_NEDENLERI ya da KAPIDA_RED_NEDENLERI),
+            ör. "IADE_BEKLIYOR".
+        miktar: O nedene düşen miktar (> 0), ör. Decimal("2").
+    """
+
+    neden: str
+    miktar: Decimal
+
 
 @dataclass
 class MalKabulKalemi:
+    """Mal kabulün bir satırı: bir sipariş kalemine gelen malın üç kovası.
+
+    Gelen = kabul + karantina toplamı + kapıda red toplamı (hesaplanır,
+    saklanmaz). Eşleştirme sadece kabul_edilen_miktar'a bakar (Karar 4).
+    Karantina ve kapıda red nedenli miktar listesidir; tek kalemde
+    birden çok neden olabilir (E110).
+
+    Attributes:
+        kalem_no: Mal kabulün kendi satır numarası: 10, 20, 30 (R6).
+        siparis_kalem_no: Hangi sipariş kalemine ait, ör. 10.
+        kabul_edilen_miktar: Depoya kabul edilen miktar (≥ 0).
+        karantinalar: NedenliMiktar listesi (KARAR_BEKLIYOR /
+            IADE_BEKLIYOR); yoksa [].
+        kapida_redler: NedenliMiktar listesi (ASIRI_TESLIMAT /
+            YANLIS_URUN); yoksa [].
+    """
+
     kalem_no: int
     siparis_kalem_no: int
     kabul_edilen_miktar: Decimal
-    karantina_miktari: Decimal = Decimal("0")
-    karantina_nedeni: str | None = None
-    kapida_reddedilen_miktar: Decimal = Decimal("0")
-    kapida_red_nedeni: str | None = None
+    karantinalar: list[NedenliMiktar] = field(default_factory=list)
+    kapida_redler: list[NedenliMiktar] = field(default_factory=list)
 
+    def karantina_miktari(self):
+        """Karantinadaki toplam miktar (bütün nedenler).
+
+        Returns:
+            Decimal, ör. 2 KARAR_BEKLIYOR + 2 IADE_BEKLIYOR → Decimal("4").
+        """
+        toplam = Decimal("0")
+        for karantina in self.karantinalar:
+            toplam += karantina.miktar
+        return toplam
+
+    def kapida_red_miktari(self):
+        """Kapıda reddedilen toplam miktar (bütün nedenler).
+
+        Returns:
+            Decimal, ör. 2 YANLIS_URUN + 2 ASIRI_TESLIMAT → Decimal("4").
+        """
+        toplam = Decimal("0")
+        for red in self.kapida_redler:
+            toplam += red.miktar
+        return toplam
 
 @dataclass
 class MalKabul:
@@ -219,6 +271,33 @@ class MalKabul:
     kayit_tarihi: str
     mal_kabul_notu: str | None = None
     iptal_bilgisi: IptalBilgisi = field(default_factory=IptalBilgisi)
+
+
+@dataclass
+class KarantinaKarari:
+    """Karantinadaki mal için verilen kararın ayrı kaydı (Karar 6-7, E86).
+
+    Mal kabul belgesi değişmez; kalan karantina = karantina toplamı −
+    kararlar (hesaplanır). v1a'da karar sadece "IADE"; "KABUL" v2'de.
+
+    Attributes:
+        mal_kabul_no: Hangi mal kabul, ör. "MKB-0001".
+        mal_kabul_kalem_no: Hangi mal kabul kalemi, ör. 10.
+        karar: "IADE" (v2: + "KABUL").
+        miktar: Karar verilen miktar; kısmi olabilir, ör. Decimal("3").
+        karar_gerekcesi: KARANTINA_KARAR_GEREKCELERI kodu,
+            ör. "FAZLA_KABUL_EDILMEDI".
+        kayit_tarihi: Kararın günü, ör. "2026-11-02" (E53).
+        karar_notu: Açıklama; DIGER seçildiyse zorunlu (servis kontrol eder).
+    """
+
+    mal_kabul_no: str
+    mal_kabul_kalem_no: int
+    karar: str
+    miktar: Decimal
+    karar_gerekcesi: str
+    kayit_tarihi: str
+    karar_notu: str | None = None
 
 
 @dataclass
@@ -434,4 +513,23 @@ if __name__ == "__main__":
         fatura.durum_degistir("BLOKE")
     except IslemYapilamazError as hata:
         print(hata)  # FTR-0001: ONAYLANDI → BLOKE geçişine izin yok
+
+
+        print("--- NedenliMiktar / KarantinaKarari ---")
+    print(NedenliMiktar("IADE_BEKLIYOR", Decimal("2")))
+    print(KarantinaKarari(
+        "MKB-0001", 10, "IADE", Decimal("3"), "FAZLA_KABUL_EDILMEDI", "2026-11-02"
+    ))
+
+
+    print("--- MalKabulKalemi toplamları ---")
+    c4_kalemi = MalKabulKalemi(10, 10, Decimal("11"), [
+        NedenliMiktar("KARAR_BEKLIYOR", Decimal("2")),
+        NedenliMiktar("IADE_BEKLIYOR", Decimal("2")),
+    ])
+    print(c4_kalemi.karantina_miktari(), c4_kalemi.kapida_red_miktari())  # 4 0
+    c9_kalemi = MalKabulKalemi(
+        10, 10, Decimal("8"), kapida_redler=[NedenliMiktar("YANLIS_URUN", Decimal("2"))]
+    )
+    print(c9_kalemi.karantina_miktari(), c9_kalemi.kapida_red_miktari())  # 0 2
         
