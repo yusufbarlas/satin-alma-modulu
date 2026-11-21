@@ -4,8 +4,8 @@ ERP mantığında satın alma süreci: **sipariş → mal kabul → fatura** ve 
 **üçlü eşleştirmesi** (three-way match). SAP MM'deki fatura doğrulama (MM-IV)
 mantığını örnek alan, Python ile yazılmış katmanlı bir terminal uygulaması.
 
-> **Durum:** geliştiriliyor (v1a). Yürüyen iskelet tamamlandı: tam eşleşme (A1)
-> ve kapat-aç (F1) senaryoları uçtan uca çalışıyor.
+> **Durum:** v1a tamamlandı. 52 otomatik test (`pytest`) ve menüden 14 elle test
+> senaryosu geçiyor. Sıradaki sürüm v1b (bkz. Yol haritası).
 
 ## Ne yapar?
 
@@ -16,7 +16,14 @@ mantığını örnek alan, Python ile yazılmış katmanlı bir terminal uygulam
   - Miktar: faturalanan miktar kabul edilen miktarı aşamaz.
   - Fiyat: fatura net fiyatı, sipariş net fiyatının alt ve üst toleransı içinde olmalı.
   - Sonuç **ONAYLANDI** ya da nedeniyle birlikte **BLOKE** (ör. `FIYAT_YUKSEK`).
-- Mal gelmeden gelen fatura **ESLESME_BEKLIYOR** durumunda bekler.
+- Mal gelmeden gelen fatura **ESLESME_BEKLIYOR** durumunda bekler; mal kabul
+  kaydedilince kendiliğinden eşleşir.
+- BLOKE faturayı gerekçeyle **serbest bırakır** ya da **reddeder**; bloke nedeni
+  kalem kalem gösterilir (beklenen, gelen, izin verilen fark).
+- Karantinadaki fazla mal için **iade kararı** kaydeder (kısmi olabilir).
+- Belgeler silinmez, gerekçeyle **iptal edilir**; zincir tersten çözülür
+  (önce fatura, sonra mal kabul, en son sipariş).
+- Bekleyen işleri listeler: eşleşme bekleyen faturalar, bloke faturalar, karantinadaki mal.
 - Tolerans malzeme kategorisine göredir (SARF / STRATEJIK); sipariş açılırken kaleme kopyalanır.
 - Tutarlar `float` değil `Decimal` ile hesaplanır.
 - Bütün veri ve belge numaraları tek bir JSON dosyasında saklanır; program kapanıp açılınca geri gelir.
