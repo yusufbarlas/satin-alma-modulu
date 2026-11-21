@@ -454,3 +454,23 @@ def test_f3(tmp_path):
     ham_veri = json.loads(veri_dosyasi.read_text(encoding="utf-8"))
     assert ham_veri["veri_surumu"] == 1
 
+def test_f4(tmp_path):
+    """F4 — ilk açılış: veri dosyası yokken program boş başlar (E77, E109).
+
+    Dosya yokken servis hata vermeden açılır ve dosya oluşturmaz; bütün
+    listeler boş, ilk tedarikçi TED-0001 alır. İlk kayıttan sonra dosya
+    oluşur ve içinde "veri_surumu": 1 yazar (4.5, E6, R5).
+    """
+    veri_dosyasi = tmp_path / "veri.json"
+    servis = SatinAlmaServisi(veri_dosyasi)
+    assert not veri_dosyasi.exists()
+    assert servis.tedarikciler == {}
+    assert servis.siparisler == {}
+    assert servis.mal_kabuller == {}
+    assert servis.faturalar == {}
+
+    eklenen_tedarikci = servis.tedarikci_ekle("ABC Kırtasiye")
+    assert eklenen_tedarikci.tedarikci_kodu == "TED-0001"
+    assert veri_dosyasi.exists()
+    ham_veri = json.loads(veri_dosyasi.read_text(encoding="utf-8"))
+    assert ham_veri["veri_surumu"] == 1
