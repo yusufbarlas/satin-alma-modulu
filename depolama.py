@@ -239,6 +239,7 @@ def nesneye_cevir(ham_veri):
             karar_gerekcesi=fatura_sozlugu["karar_gerekcesi"],
             karar_notu=fatura_sozlugu["karar_notu"],
             iptal_bilgisi=iptal_bilgisi,
+            karar_tarihi=fatura_sozlugu.get("karar_tarihi"),
         )
         faturalar.append(fatura)
     yeni["faturalar"] = faturalar

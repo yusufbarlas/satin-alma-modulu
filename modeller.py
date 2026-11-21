@@ -403,6 +403,8 @@ class Fatura:
         karar_gerekcesi: Serbest bırak / reddet gerekçesi (KARAR_GEREKCELERI).
         karar_notu: Karar açıklaması; DIGER seçildiyse zorunlu (servis kontrol eder).
         iptal_bilgisi: Boş kurulan iptal kartı (IptalBilgisi).
+        karar_tarihi: Serbest bırak / reddet günü, ör. "2026-11-02"; karar
+        verilene kadar None (E113).
     """
 
     fatura_no: str
@@ -415,6 +417,7 @@ class Fatura:
     karar_gerekcesi: str | None = None
     karar_notu: str | None = None
     iptal_bilgisi: IptalBilgisi = field(default_factory=IptalBilgisi)
+    karar_tarihi: str | None = None
 
     def genel_toplam(self):
         """Bütün kalem tutarlarının toplamı.
