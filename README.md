@@ -23,7 +23,7 @@ mantığını örnek alan, Python ile yazılmış katmanlı bir terminal uygulam
 
 ## Kurulum
 
-Python 3.11 veya üstü gerekir. Dış kütüphane kullanılmaz.
+Python 3.11 veya üstü gerekir. Program dış kütüphane kullanmaz; testler için pytest gerekir.
 
 ```bash
 git clone https://github.com/yusufbarlas/satin-alma-modulu.git
@@ -31,17 +31,18 @@ cd satin-alma-modulu
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # macOS / Linux
+pip install -r requirements.txt
 ```
 
 ## Çalıştırma
 
 ```bash
 python ana.py          # terminal menüsü
-python senaryolar.py   # test senaryoları (GEÇTİ / KALDI özeti)
+pytest -v              # test senaryoları (her testin adı ve PASSED / FAILED)
 ```
 
-Menü gerçek veriyi `veri.json`'a, senaryolar ayrı bir `test_veri.json`'a yazar;
-ikisi de Git'e girmez.
+Menü gerçek veriyi `veri.json`'a yazar (Git'e girmez). Testler her seferinde
+pytest'in açtığı geçici bir klasörde çalışır; gerçek veriye dokunmaz.
 
 ## Proje yapısı
 
@@ -55,13 +56,13 @@ ikisi de Git'e girmez.
 | `depolama.py` | JSON'a kaydetme ve geri yükleme |
 | `servis.py` | İş akışı: `SatinAlmaServisi` (belgeler arası kurallar burada) |
 | `ana.py` | Terminal menüsü (kullanıcıyla konuşan tek dosya) |
-| `senaryolar.py` | Programı uçtan uca deneyen test senaryoları |
+| `test_senaryolar.py` | Programı uçtan uca deneyen test senaryoları (pytest) |
 
 Bağımlılık yönü tek: üstteki katman alttakini kullanır, tersi olmaz.
 
 ## Yol haritası
 
-- **v1a:** sipariş, mal kabul, fatura, üçlü eşleştirme, iptaller, bloke faturayı serbest bırakma / reddetme, 52 test senaryosu
+- **v1a:** sipariş, mal kabul, fatura, üçlü eşleştirme, iptaller, bloke faturayı serbest bırakma / reddetme, 52 test senaryosu (pytest)
 - **v1b:** satın alma talebi, onay, teklif, ödeme
-- **v2:** enum, tarih tipleri, loglama, tip ipuçları, pytest, kısmi teslimat, KDV
+- **v2:** enum, tarih tipleri, loglama, tip ipuçları, CI (her push'ta testler), kısmi teslimat, KDV
 - **v3:** PostgreSQL, FastAPI, kullanıcı rolleri
