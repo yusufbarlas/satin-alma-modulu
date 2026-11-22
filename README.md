@@ -4,7 +4,7 @@ ERP mantığında satın alma süreci: **sipariş → mal kabul → fatura** ve 
 **üçlü eşleştirmesi** (three-way match). SAP MM'deki fatura doğrulama (MM-IV)
 mantığını örnek alan, Python ile yazılmış katmanlı bir terminal uygulaması.
 
-> **Durum:** v1a tamamlandı. 52 otomatik test (`pytest`) ve menüden 14 elle test
+> **Durum:** v1a.1 tamamlandı. 56 otomatik test (`pytest`) ve menüden 14 elle test
 > senaryosu geçiyor. Sıradaki sürüm v1b (bkz. Yol haritası).
 
 ## Ne yapar?
@@ -92,6 +92,7 @@ Bağımlılık yönü tek: üstteki katman alttakini kullanır, tersi olmaz.
 ## Yol haritası
 
 - **v1a:** sipariş, mal kabul, fatura, üçlü eşleştirme, iptaller, bloke faturayı serbest bırakma / reddetme, 52 test senaryosu (pytest)
+- **v1a.1:** hata düzeltmeleri: aynı sipariş kalemi bir belgede iki satır girilemez; mükerrer fatura kontrolü boşluk ve büyük / küçük harf farkını yok sayar; birim küçük harfle saklanır; 56 test senaryosu
 - **v1b:** satın alma talebi, onay, teklif, ödeme
 - **v2:** enum, tarih tipleri, loglama, tip ipuçları, CI (her push'ta testler), kısmi teslimat, KDV
 - **v3:** PostgreSQL, FastAPI, kullanıcı rolleri

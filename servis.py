@@ -258,7 +258,7 @@ class SatinAlmaServisi:
 
         Kalem numarasını ve tolerans kopyasını servis verir. Sipariş
         numarası bütün kalemler hatasız kurulduktan sonra alınır; hatalı
-        girişte sayaç artmaz.
+        girişte sayaç artmaz. Birim boşlukları atılıp küçük harfle saklanır.
 
         Args:
             tedarikci_kodu: Kayıtlı tedarikçi kodu, ör. "TED-0001".
@@ -321,7 +321,7 @@ class SatinAlmaServisi:
                 kalem_no=kalem_no,
                 malzeme_adi=kalem["malzeme_adi"],
                 miktar=kalem["miktar"],
-                birim=kalem["birim"],
+                birim=kalem["birim"].strip().lower(),
                 birim_fiyat=kalem["birim_fiyat"],
                 kategori=kalem["kategori"],
                 tolerans=kalem_toleransi,
@@ -451,7 +451,8 @@ class SatinAlmaServisi:
                 edilmişse (4b), siparişin aktif mal kabulü zaten varsa (4c),
                 kalem siparişte yoksa (4d).
             GecersizGirisError: Miktar negatifse (4f), yanlış ürün gelen
-                miktardan büyükse (4h), hiç kalem oluşmadıysa (4g).
+                miktardan büyükse (4h), hiç kalem oluşmadıysa (4g), aynı
+                sipariş kalemi iki kez girildiyse (4i).
         """
         siparis = self._kayit_bul(self.siparisler, siparis_no)
         if siparis.iptal_bilgisi.iptal_edildi:
@@ -494,6 +495,11 @@ class SatinAlmaServisi:
                 raise IslemYapilamazError(
                     f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
                     f"kalem siparişte yok"
+                )
+            if kalem["siparis_kalem_no"] in kova_sonuclari:
+                raise GecersizGirisError(
+                    f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
+                    f"kalem mal kabulde iki kez girilmiş"
                 )
 
             siparis_kalemi = siparis_kalemleri[kalem["siparis_kalem_no"]]
@@ -566,7 +572,9 @@ class SatinAlmaServisi:
 
         Args:
             siparis_no: Onaylı siparişin numarası, ör. "SAS-0001".
-            tedarikci_fatura_no: Tedarikçinin kendi fatura numarası.
+            tedarikci_fatura_no: Tedarikçinin kendi fatura numarası;
+                boşlukları atılıp büyük harfe çevrilerek saklanır ve
+                karşılaştırılır (14a).
             kalemler: Sözlük listesi. Her sözlükte "siparis_kalem_no" (int),
                 "miktar" ve "birim_fiyat" (Decimal); isteğe bağlı
                 "iskonto_turu" ve "iskonto_degeri".
@@ -583,7 +591,8 @@ class SatinAlmaServisi:
                 aktif faturası varsa (14a).
             GecersizGirisError: Tedarikçi fatura no boşsa (5d), miktar
                 negatifse ya da fiyat ≤ 0 ise (5g), iskonto geçersizse
-                (13a), hiç kalem oluşmadıysa (5h).
+                (13a), hiç kalem oluşmadıysa (5h), aynı sipariş kalemi
+                iki kez girildiyse (5i).
         """
         siparis = self._kayit_bul(self.siparisler, siparis_no)
         if siparis.iptal_bilgisi.iptal_edildi:
@@ -596,13 +605,15 @@ class SatinAlmaServisi:
             )
         if not tedarikci_fatura_no or not tedarikci_fatura_no.strip():
             raise GecersizGirisError("Tedarikçi fatura no boş olamaz")
+        tedarikci_fatura_no = tedarikci_fatura_no.strip().upper()
 
         for fatura in self.faturalar.values():
             if fatura.durum == "REDDEDILDI" or fatura.iptal_bilgisi.iptal_edildi:
                 continue
             faturanin_siparisi = self._kayit_bul(self.siparisler, fatura.siparis_no)
             if (faturanin_siparisi.tedarikci_kodu == siparis.tedarikci_kodu
-                    and fatura.tedarikci_fatura_no == tedarikci_fatura_no):
+                    and fatura.tedarikci_fatura_no.strip().upper()
+                    == tedarikci_fatura_no):
                 raise IslemYapilamazError(
                     f"Bu tedarikçinin {tedarikci_fatura_no} numaralı faturası "
                     f"zaten {fatura.fatura_no} olarak kayıtlı"
@@ -634,6 +645,12 @@ class SatinAlmaServisi:
                     f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
                     f"kalem siparişte yok"
                 )
+            for onceki_kalem in fatura_kalemleri:
+                if onceki_kalem.siparis_kalem_no == kalem["siparis_kalem_no"]:
+                    raise GecersizGirisError(
+                        f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
+                        f"kalem faturada iki kez girilmiş"
+                    )
             iskontoyu_dogrula(
                 kalem["birim_fiyat"],
                 kalem.get("iskonto_turu", "ORAN"),
