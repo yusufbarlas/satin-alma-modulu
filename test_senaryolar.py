@@ -1139,6 +1139,99 @@ def test_e11(tmp_path):
     assert kaydedilen_fatura.karar_gerekcesi is None
 
 
+def test_e12(tmp_path):
+    """E12 — mal kabulde aynı sipariş kalemi iki satırda: kayıt oluşmaz (4i, E126).
+
+    SAS-0001 k10: sipariş 10, tolerans %10. 11 + 11 iki satır kabul
+    edilseydi tolerans her satıra ayrı uygulanır, 22 kabul edilirdi.
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+
+    with pytest.raises(GecersizGirisError, match="iki kez"):
+        servis.mal_kabul_kaydet("SAS-0001", [
+            {"siparis_kalem_no": 10, "gelen_miktar": Decimal("11")},
+            {"siparis_kalem_no": 10, "gelen_miktar": Decimal("11")},
+        ], tarih=test_tarihi)
+    assert servis.mal_kabuller == {}
+    assert servis.sayaclar["MKB"] == 0
+
+
+def test_e13(tmp_path):
+    """E13 — faturada aynı sipariş kalemi iki satırda: fatura oluşmaz (5i, E126).
+
+    Satırlara bölünen kalemde küçük fark eşiği her satıra ayrı
+    uygulanırdı; aynı sipariş kalemi faturada tek satır olur.
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+
+    with pytest.raises(GecersizGirisError, match="iki kez"):
+        servis.fatura_kaydet("SAS-0001", "F-1001", [
+            {"siparis_kalem_no": 10, "miktar": Decimal("5"),
+             "birim_fiyat": Decimal("104")},
+            {"siparis_kalem_no": 10, "miktar": Decimal("5"),
+             "birim_fiyat": Decimal("104")},
+        ], tarih=test_tarihi)
+    assert servis.faturalar == {}
+    assert servis.sayaclar["FTR"] == 0
+
+
+def test_e14(tmp_path):
+    """E14 — mükerrer fatura, farklı yazım: boşluk ve harf farkı yok sayılır (14a, E126).
+
+    " f-1001" girilen fatura "F-1001" olarak saklanır. SAS-0002 de
+    TED-0001'in; "F-1001 " ile girilen fatura reddedilir.
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+        {"siparis_kalem_no": 20, "gelen_miktar": Decimal("4")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet("SAS-0001", " f-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("100")},
+        {"siparis_kalem_no": 20, "miktar": Decimal("4"),
+         "birim_fiyat": Decimal("250")},
+    ], tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError, match="FTR-0001"):
+        servis.fatura_kaydet("SAS-0002", "F-1001 ", [
+            {"siparis_kalem_no": 10, "miktar": Decimal("100"),
+             "birim_fiyat": Decimal("20")},
+        ], tarih=test_tarihi)
+    assert kaydedilen_fatura.tedarikci_fatura_no == "F-1001"
+    assert len(servis.faturalar) == 1
+
+
+def test_e15(tmp_path):
+    """E15 — birim "Adet " yazılsa da adet kuralı çalışır (E126).
+
+    15 adet sipariş, 17 gelir. SARF ayarı: izin %10 = 1,5 → adette 1;
+    aşırı sınır %25 = 3,75 → 3. Kabul 16, karantina 1 KARAR_BEKLIYOR.
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    yeni_siparis = servis.siparis_ac("TED-0001", [
+        {"malzeme_adi": "Zımba", "miktar": Decimal("15"), "birim": "Adet ",
+         "birim_fiyat": Decimal("10"), "kategori": "SARF"},
+    ], tarih=test_tarihi)
+    servis.siparis_onayla(yeni_siparis.siparis_no)
+    mal_kabul_sonucu = servis.mal_kabul_kaydet(yeni_siparis.siparis_no, [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("17")},
+    ], tarih=test_tarihi)
+    mal_kabul_kalemi = mal_kabul_sonucu.mal_kabul.mal_kabul_kalemleri[0]
+
+    assert yeni_siparis.siparis_kalemleri[0].birim == "adet"
+    assert mal_kabul_kalemi.kabul_edilen_miktar == Decimal("16")
+    assert mal_kabul_kalemi.karantinalar == [
+        NedenliMiktar(neden="KARAR_BEKLIYOR", miktar=Decimal("1")),
+    ]
+
 def test_f1(tmp_path):
     """F1 — kapat-aç: kaydedilen belgeler ve sayaçlar dosyadan geri gelir.
 
