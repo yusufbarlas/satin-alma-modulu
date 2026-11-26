@@ -126,6 +126,18 @@ class SatinAlmaServisi:
         for fatura in veri["faturalar"]:
             self.faturalar[fatura.fatura_no] = fatura
 
+        self.talepler = {}
+        for talep in veri["talepler"]:
+            self.talepler[talep.talep_no] = talep
+
+        self.teklifler = {}
+        for teklif in veri["teklifler"]:
+            self.teklifler[teklif.teklif_no] = teklif
+
+        self.odemeler = {}
+        for odeme in veri["odemeler"]:
+            self.odemeler[odeme.odeme_no] = odeme
+
     def _kaydet(self):
         """Bellekteki bütün veriyi dosyaya yazar.
 
@@ -143,6 +155,9 @@ class SatinAlmaServisi:
             "mal_kabuller": list(self.mal_kabuller.values()),
             "faturalar": list(self.faturalar.values()),
             "karantina_kararlari": self.karantina_kararlari,
+            "talepler": list(self.talepler.values()),
+            "teklifler": list(self.teklifler.values()),
+            "odemeler": list(self.odemeler.values()),
         }
         kaydet(veri, self.dosya_yolu)
     
@@ -163,7 +178,7 @@ class SatinAlmaServisi:
         return f"{onek}-{self.sayaclar[onek]:04d}"
 
 
-    def _kayit_bul(self, kayitlar, numara):
+    def _kayit_bul(self, kayitlar, numara, kod):
         """Numarası verilen belgeyi verilen sözlükte bulur.
 
         Dört belge türü için tek yardımcı: hangi sözlükte aranacağını
@@ -172,15 +187,21 @@ class SatinAlmaServisi:
         Args:
             kayitlar: Numarayla anahtarlı belge sözlüğü.
             numara: Aranan numara, ör. "SAS-0001".
+            kod: Bulunamazsa verilecek hata kodu; çağıran metot işlemini
+                bildiği için kodu o verir (E129), ör. "9a".
 
         Returns:
             Bulunan belge nesnesi.
 
         Raises:
-            KayitBulunamadiError: Numara sözlükte yoksa.
+            KayitBulunamadiError: Numara sözlükte yoksa (kod: çağıranın
+                verdiği).
         """
         if numara not in kayitlar:
-            raise KayitBulunamadiError(f"{numara} numaralı kayıt bulunamadı")
+            raise KayitBulunamadiError(
+                f"{numara} numaralı kayıt bulunamadı",
+                kod=kod,
+            )
         return kayitlar[numara]
 
     
@@ -200,7 +221,7 @@ class SatinAlmaServisi:
                 aktif_mal_kabuller.append(mal_kabul)
         return aktif_mal_kabuller
 
-    def _gerekceyi_dogrula(self, gerekce, notu, gecerli_gerekceler):
+    def _gerekceyi_dogrula(self, gerekce, notu, gecerli_gerekceler, kod):
         """Gerekçe kodunu ve DIGER'in notunu kontrol eder.
 
         Karar, iptal ve karantina kararı metotlarının ortak yardımcısı
@@ -211,18 +232,23 @@ class SatinAlmaServisi:
             notu: Açıklama; gerekçe DIGER ise zorunlu.
             gecerli_gerekceler: O işlemin gerekçe sözlüğü,
                 ör. IPTAL_GEREKCELERI["FATURA"].
+            kod: Hata kodu; çağıran metot verir (E129): 7c, 12a, 15c.
 
         Raises:
             GecersizGirisError: Gerekçe listede yoksa ya da DIGER seçilip
-                not boşsa (7c, 12a, 15c).
+                not boşsa (kod: çağıranın verdiği).
         """
         if gerekce not in gecerli_gerekceler:
             raise GecersizGirisError(
                 f"Geçersiz gerekçe: {gerekce}; geçerli olanlar: "
-                f"{', '.join(gecerli_gerekceler)}"
+                f"{', '.join(gecerli_gerekceler)}",
+                kod=kod,
             )
         if gerekce == "DIGER" and (not notu or not notu.strip()):
-            raise GecersizGirisError("DIGER seçildiğinde açıklama notu zorunlu")
+            raise GecersizGirisError(
+                "DIGER seçildiğinde açıklama notu zorunlu",
+                kod=kod,
+            )
 
     def tedarikci_ekle(self, tedarikci_adi, firma_adi=None):
         """Yeni tedarikçiyi kaydeder ve döndürür.
@@ -241,7 +267,7 @@ class SatinAlmaServisi:
             GecersizGirisError: Ad boşsa.
         """
         if not tedarikci_adi or not tedarikci_adi.strip():
-            raise GecersizGirisError("Tedarikçi adı boş olamaz")
+            raise GecersizGirisError("Tedarikçi adı boş olamaz", kod="1a")
 
         tedarikci_kodu = self._numara_ver(ONEKLER["tedarikci"])
         yeni_tedarikci = Tedarikci(
@@ -279,9 +305,12 @@ class SatinAlmaServisi:
                 geçersizse (2f), miktar tavanı negatifse (2g), iskonto
                 geçersizse (13a).
         """
-        self._kayit_bul(self.tedarikciler, tedarikci_kodu)
+        self._kayit_bul(self.tedarikciler, tedarikci_kodu, kod="2a")
         if not kalemler:
-            raise GecersizGirisError("Siparişte en az bir kalem olmalı")
+            raise GecersizGirisError(
+                "Siparişte en az bir kalem olmalı",
+                kod="2b",
+            )
         if tarih is None:
             tarih = date.today().isoformat()
 
@@ -290,19 +319,30 @@ class SatinAlmaServisi:
         for kalem in kalemler:
             if kalem["kategori"] not in TOLERANSLAR:
                 raise GecersizGirisError(
-                    f"Geçersiz kategori: {kalem['kategori']}"
+                    f"Geçersiz kategori: {kalem['kategori']}",
+                    kod="2f",
                 )
             if not kalem["malzeme_adi"] or not kalem["malzeme_adi"].strip():
-                raise GecersizGirisError(f"Kalem {kalem_no}: malzeme adı boş olamaz")
+                raise GecersizGirisError(
+                    f"Kalem {kalem_no}: malzeme adı boş olamaz",
+                    kod="2c",
+                )
             if not kalem["birim"] or not kalem["birim"].strip():
-                raise GecersizGirisError(f"Kalem {kalem_no}: birim boş olamaz")
+                raise GecersizGirisError(
+                    f"Kalem {kalem_no}: birim boş olamaz",
+                    kod="2c",
+                )
             if kalem["miktar"] <= 0 or kalem["birim_fiyat"] <= 0:
                 raise GecersizGirisError(
-                    "Miktar ve birim fiyat 0'dan büyük olmalı"
+                    "Miktar ve birim fiyat 0'dan büyük olmalı",
+                    kod="2e",
                 )
             miktar_tavani = kalem.get("miktar_tavani", None)
             if miktar_tavani is not None and miktar_tavani < 0:
-                raise GecersizGirisError("Miktar tavanı negatif olamaz")
+                raise GecersizGirisError(
+                    "Miktar tavanı negatif olamaz",
+                    kod="2g",
+                )
             iskontoyu_dogrula(
                 kalem["birim_fiyat"],
                 kalem.get("iskonto_turu", "ORAN"),
@@ -358,10 +398,11 @@ class SatinAlmaServisi:
             IslemYapilamazError: Sipariş iptal edilmişse ya da TASLAK
                 değilse (3b).
         """
-        siparis = self._kayit_bul(self.siparisler, siparis_no)
+        siparis = self._kayit_bul(self.siparisler, siparis_no, kod="3a")
         if siparis.iptal_bilgisi.iptal_edildi:
             raise IslemYapilamazError(
-                f"{siparis_no}: sipariş iptal edilmiş, onaylanamaz"
+                f"{siparis_no}: sipariş iptal edilmiş, onaylanamaz",
+                kod="3b",
             )
         siparis.durum_degistir("ONAYLANDI")
         self._kaydet()
@@ -379,9 +420,9 @@ class SatinAlmaServisi:
             Bulunan Siparis.
 
         Raises:
-            KayitBulunamadiError: Numara yoksa.
+            KayitBulunamadiError: Numara yoksa (27a).
         """
-        return self._kayit_bul(self.siparisler, siparis_no)
+        return self._kayit_bul(self.siparisler, siparis_no, kod="27a")
 
     def mal_kabul_bul(self, mal_kabul_no):
         """Mal kabulü numarasıyla bulur ve döndürür (E112).
@@ -393,9 +434,9 @@ class SatinAlmaServisi:
             Bulunan MalKabul.
 
         Raises:
-            KayitBulunamadiError: Numara yoksa (8a, 15a).
+            KayitBulunamadiError: Numara yoksa (27b).
         """
-        return self._kayit_bul(self.mal_kabuller, mal_kabul_no)
+        return self._kayit_bul(self.mal_kabuller, mal_kabul_no, kod="27b")
 
     def fatura_bul(self, fatura_no):
         """Faturayı numarasıyla bulur ve döndürür (E112).
@@ -407,9 +448,9 @@ class SatinAlmaServisi:
             Bulunan Fatura.
 
         Raises:
-            KayitBulunamadiError: Numara yoksa (7a, 9a, 16a).
+            KayitBulunamadiError: Numara yoksa (27c).
         """
-        return self._kayit_bul(self.faturalar, fatura_no)
+        return self._kayit_bul(self.faturalar, fatura_no, kod="27c")
 
     def tedarikcileri_listele(self):
         """Bütün tedarikçileri kayıt sırasıyla verir (E112).
@@ -454,19 +495,22 @@ class SatinAlmaServisi:
                 miktardan büyükse (4h), hiç kalem oluşmadıysa (4g), aynı
                 sipariş kalemi iki kez girildiyse (4i).
         """
-        siparis = self._kayit_bul(self.siparisler, siparis_no)
+        siparis = self._kayit_bul(self.siparisler, siparis_no, kod="4a")
         if siparis.iptal_bilgisi.iptal_edildi:
             raise IslemYapilamazError(
-                f"{siparis_no}: sipariş iptal edilmiş, mal kabul yapılamaz"
+                f"{siparis_no}: sipariş iptal edilmiş, mal kabul yapılamaz",
+                kod="4b",
             )
         if siparis.durum != "ONAYLANDI":
             raise IslemYapilamazError(
-                f"{siparis_no}: sipariş onaylı değil, mal kabul yapılamaz"
+                f"{siparis_no}: sipariş onaylı değil, mal kabul yapılamaz",
+                kod="4b",
             )
         if self._aktif_mal_kabuller(siparis_no):
             raise IslemYapilamazError(
                 f"{siparis_no}: siparişin iptal edilmemiş bir mal kabulü "
-                f"zaten var"
+                f"zaten var",
+                kod="4c",
             )
         if tarih is None:
             tarih = date.today().isoformat()
@@ -483,23 +527,26 @@ class SatinAlmaServisi:
             yanlis_urun_miktari = kalem.get("yanlis_urun_miktari", Decimal("0"))
 
             if gelen_miktar < 0 or yanlis_urun_miktari < 0:
-                raise GecersizGirisError("Miktar negatif olamaz")
+                raise GecersizGirisError("Miktar negatif olamaz", kod="4f")
             if yanlis_urun_miktari > gelen_miktar:
                 raise GecersizGirisError(
                     f"Yanlış ürün miktarı ({yanlis_urun_miktari}) gelen "
-                    f"miktardan ({gelen_miktar}) büyük olamaz"
+                    f"miktardan ({gelen_miktar}) büyük olamaz",
+                    kod="4h",
                 )
             if gelen_miktar == 0 and yanlis_urun_miktari == 0:
                 continue
             if kalem["siparis_kalem_no"] not in siparis_kalemleri:
                 raise IslemYapilamazError(
                     f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
-                    f"kalem siparişte yok"
+                    f"kalem siparişte yok",
+                    kod="4d",
                 )
             if kalem["siparis_kalem_no"] in kova_sonuclari:
                 raise GecersizGirisError(
                     f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
-                    f"kalem mal kabulde iki kez girilmiş"
+                    f"kalem mal kabulde iki kez girilmiş",
+                    kod="4i",
                 )
 
             siparis_kalemi = siparis_kalemleri[kalem["siparis_kalem_no"]]
@@ -534,7 +581,10 @@ class SatinAlmaServisi:
             kalem_no += KALEM_NO_ARTISI
 
         if not mal_kabul_kalemleri:
-            raise GecersizGirisError("Mal kabulde en az bir kalem olmalı")
+            raise GecersizGirisError(
+                "Mal kabulde en az bir kalem olmalı",
+                kod="4g",
+            )
 
         mal_kabul_no = self._numara_ver(ONEKLER["mal_kabul"])
         mal_kabul = MalKabul(
@@ -594,34 +644,43 @@ class SatinAlmaServisi:
                 (13a), hiç kalem oluşmadıysa (5h), aynı sipariş kalemi
                 iki kez girildiyse (5i).
         """
-        siparis = self._kayit_bul(self.siparisler, siparis_no)
+        siparis = self._kayit_bul(self.siparisler, siparis_no, kod="5a")
         if siparis.iptal_bilgisi.iptal_edildi:
             raise IslemYapilamazError(
-                f"{siparis_no}: sipariş iptal edilmiş, fatura kaydedilemez"
+                f"{siparis_no}: sipariş iptal edilmiş, fatura kaydedilemez",
+                kod="5b",
             )
         if siparis.durum != "ONAYLANDI":
             raise IslemYapilamazError(
-                f"{siparis_no}: sipariş onaylı değil, fatura kaydedilemez"
+                f"{siparis_no}: sipariş onaylı değil, fatura kaydedilemez",
+                kod="5b",
             )
         if not tedarikci_fatura_no or not tedarikci_fatura_no.strip():
-            raise GecersizGirisError("Tedarikçi fatura no boş olamaz")
+            raise GecersizGirisError(
+                "Tedarikçi fatura no boş olamaz",
+                kod="5d",
+            )
         tedarikci_fatura_no = tedarikci_fatura_no.strip().upper()
 
         for fatura in self.faturalar.values():
             if fatura.durum == "REDDEDILDI" or fatura.iptal_bilgisi.iptal_edildi:
                 continue
-            faturanin_siparisi = self._kayit_bul(self.siparisler, fatura.siparis_no)
+            faturanin_siparisi = self._kayit_bul(
+                self.siparisler, fatura.siparis_no, kod="26c"
+            )
             if (faturanin_siparisi.tedarikci_kodu == siparis.tedarikci_kodu
                     and fatura.tedarikci_fatura_no.strip().upper()
                     == tedarikci_fatura_no):
                 raise IslemYapilamazError(
                     f"Bu tedarikçinin {tedarikci_fatura_no} numaralı faturası "
-                    f"zaten {fatura.fatura_no} olarak kayıtlı"
+                    f"zaten {fatura.fatura_no} olarak kayıtlı",
+                    kod="14a",
                 )
             if fatura.siparis_no == siparis_no:
                 raise IslemYapilamazError(
                     f"{siparis_no}: siparişin aktif faturası zaten var "
-                    f"({fatura.fatura_no})"
+                    f"({fatura.fatura_no})",
+                    kod="5c",
                 )
 
         if tarih is None:
@@ -635,21 +694,26 @@ class SatinAlmaServisi:
         kalem_no = KALEM_NO_ARTISI
         for kalem in kalemler:
             if kalem["miktar"] < 0:
-                raise GecersizGirisError("Miktar negatif olamaz")
+                raise GecersizGirisError("Miktar negatif olamaz", kod="5g")
             if kalem["miktar"] == 0:
                 continue
             if kalem["birim_fiyat"] <= 0:
-                raise GecersizGirisError("Birim fiyat 0'dan büyük olmalı")
+                raise GecersizGirisError(
+                    "Birim fiyat 0'dan büyük olmalı",
+                    kod="5g",
+                )
             if kalem["siparis_kalem_no"] not in siparis_kalemleri:
                 raise IslemYapilamazError(
                     f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
-                    f"kalem siparişte yok"
+                    f"kalem siparişte yok",
+                    kod="5e",
                 )
             for onceki_kalem in fatura_kalemleri:
                 if onceki_kalem.siparis_kalem_no == kalem["siparis_kalem_no"]:
                     raise GecersizGirisError(
                         f"{siparis_no}: {kalem['siparis_kalem_no']} numaralı "
-                        f"kalem faturada iki kez girilmiş"
+                        f"kalem faturada iki kez girilmiş",
+                        kod="5i",
                     )
             iskontoyu_dogrula(
                 kalem["birim_fiyat"],
@@ -668,7 +732,10 @@ class SatinAlmaServisi:
             kalem_no += KALEM_NO_ARTISI
 
         if not fatura_kalemleri:
-            raise GecersizGirisError("Faturada en az bir kalem olmalı")
+            raise GecersizGirisError(
+                "Faturada en az bir kalem olmalı",
+                kod="5h",
+            )
 
         fatura_no = self._numara_ver(ONEKLER["fatura"])
         fatura = Fatura(
@@ -702,7 +769,9 @@ class SatinAlmaServisi:
         Returns:
             EslestirmeSonucu.
         """
-        siparis_bul = self._kayit_bul(self.siparisler, fatura.siparis_no)
+        siparis_bul = self._kayit_bul(
+            self.siparisler, fatura.siparis_no, kod="26c"
+        )
         kabul_toplamlari = {}
         faturalanan_toplamlar = {}
 
@@ -757,20 +826,23 @@ class SatinAlmaServisi:
                 edilmişse (6b), siparişin aktif mal kabulü yoksa (6d).
             GecersizGirisError: Dağıtım fatura miktarını tutmazsa (6c).
         """
-        fatura = self._kayit_bul(self.faturalar, fatura_no)
+        fatura = self._kayit_bul(self.faturalar, fatura_no, kod="6a")
         if fatura.iptal_bilgisi.iptal_edildi:
             raise IslemYapilamazError(
-                f"{fatura_no}: fatura iptal edilmiş, eşleştirilemez"
+                f"{fatura_no}: fatura iptal edilmiş, eşleştirilemez",
+                kod="6b",
             )
         if fatura.durum != "ESLESME_BEKLIYOR":
             raise IslemYapilamazError(
-                f"{fatura_no}: fatura eşleşme beklemiyor (şu an {fatura.durum})"
+                f"{fatura_no}: fatura eşleşme beklemiyor (şu an {fatura.durum})",
+                kod="6b",
             )
         aktif_mal_kabuller = self._aktif_mal_kabuller(fatura.siparis_no)
         if not aktif_mal_kabuller:
             raise IslemYapilamazError(
                 f"{fatura_no}: siparişin mal kabulü yok; fatura mal gelince "
-                f"kendiliğinden eşleşir"
+                f"kendiliğinden eşleşir",
+                kod="6d",
             )
 
         sonuc = self._eslestirme_sonucu_hesapla(fatura)
@@ -806,16 +878,18 @@ class SatinAlmaServisi:
         """
         if tarih is None:
             tarih = date.today().isoformat()
-        fatura = self._kayit_bul(self.faturalar, fatura_no)
+        fatura = self._kayit_bul(self.faturalar, fatura_no, kod="7a")
         if fatura.durum != "BLOKE":
             raise IslemYapilamazError(
                 f"{fatura_no}: sadece BLOKE fatura serbest bırakılabilir "
-                f"(şu an {fatura.durum})"
+                f"(şu an {fatura.durum})",
+                kod="7b",
             )
         self._gerekceyi_dogrula(
             gerekce=gerekce,
             notu=notu,
             gecerli_gerekceler=KARAR_GEREKCELERI["SERBEST"],
+            kod="7c",
         )
         fatura.durum_degistir("SERBEST")
         fatura.karar_gerekcesi = gerekce
@@ -844,16 +918,18 @@ class SatinAlmaServisi:
         """
         if tarih is None:
             tarih = date.today().isoformat()
-        fatura = self._kayit_bul(self.faturalar, fatura_no)
+        fatura = self._kayit_bul(self.faturalar, fatura_no, kod="7a")
         if fatura.durum not in ("BLOKE", "ESLESME_BEKLIYOR"):
             raise IslemYapilamazError(
                 f"{fatura_no}: sadece BLOKE ya da ESLESME_BEKLIYOR fatura "
-                f"reddedilebilir (şu an {fatura.durum})"
+                f"reddedilebilir (şu an {fatura.durum})",
+                kod="7b",
             )
         self._gerekceyi_dogrula(
             gerekce=gerekce,
             notu=notu,
             gecerli_gerekceler=KARAR_GEREKCELERI["REDDEDILDI"],
+            kod="7c",
         )
         fatura.durum_degistir("REDDEDILDI")
         fatura.karar_gerekcesi = gerekce
@@ -881,13 +957,17 @@ class SatinAlmaServisi:
         """
         if tarih is None:
             tarih = date.today().isoformat()
-        fatura = self._kayit_bul(self.faturalar, fatura_no)
+        fatura = self._kayit_bul(self.faturalar, fatura_no, kod="9a")
         if fatura.iptal_bilgisi.iptal_edildi:
-            raise IslemYapilamazError(f"{fatura_no}: fatura zaten iptal edilmiş")
+            raise IslemYapilamazError(
+                f"{fatura_no}: fatura zaten iptal edilmiş",
+                kod="9b",
+            )
         self._gerekceyi_dogrula(
             gerekce=gerekce,
             notu=notu,
             gecerli_gerekceler=IPTAL_GEREKCELERI["FATURA"],
+            kod="12a",
         )
         fatura.iptal_bilgisi.iptal_et(gerekce, notu, tarih)
         self._kaydet()
@@ -914,10 +994,11 @@ class SatinAlmaServisi:
         """
         if tarih is None:
             tarih = date.today().isoformat()
-        mal_kabul = self._kayit_bul(self.mal_kabuller, mal_kabul_no)
+        mal_kabul = self._kayit_bul(self.mal_kabuller, mal_kabul_no, kod="8a")
         if mal_kabul.iptal_bilgisi.iptal_edildi:
             raise IslemYapilamazError(
-                f"{mal_kabul_no}: mal kabul zaten iptal edilmiş"
+                f"{mal_kabul_no}: mal kabul zaten iptal edilmiş",
+                kod="8b",
             )
         for fatura in self.faturalar.values():
             if fatura.durum == "REDDEDILDI" or fatura.iptal_bilgisi.iptal_edildi:
@@ -928,18 +1009,21 @@ class SatinAlmaServisi:
                         raise IslemYapilamazError(
                             f"{mal_kabul_no}: bu mal kabule dayanan aktif "
                             f"fatura var ({fatura.fatura_no}), önce faturayı "
-                            f"iptal edin"
+                            f"iptal edin",
+                            kod="8c",
                         )
         for karar in self.karantina_kararlari:
             if karar.mal_kabul_no == mal_kabul_no:
                 raise IslemYapilamazError(
                     f"{mal_kabul_no}: mal kabulün {karar.mal_kabul_kalem_no}. "
-                    f"kalemine karantina kararı verilmiş, iptal edilemez"
+                    f"kalemine karantina kararı verilmiş, iptal edilemez",
+                    kod="8d",
                 )
         self._gerekceyi_dogrula(
             gerekce=gerekce,
             notu=notu,
             gecerli_gerekceler=IPTAL_GEREKCELERI["MAL_KABUL"],
+            kod="12a",
         )
         mal_kabul.iptal_bilgisi.iptal_et(gerekce, notu, tarih)
         self._kaydet()
@@ -966,13 +1050,17 @@ class SatinAlmaServisi:
         """
         if tarih is None:
             tarih = date.today().isoformat()
-        siparis = self._kayit_bul(self.siparisler, siparis_no)
+        siparis = self._kayit_bul(self.siparisler, siparis_no, kod="11a")
         if siparis.iptal_bilgisi.iptal_edildi:
-            raise IslemYapilamazError(f"{siparis_no}: sipariş zaten iptal edilmiş")
+            raise IslemYapilamazError(
+                f"{siparis_no}: sipariş zaten iptal edilmiş",
+                kod="11b",
+            )
         if self._aktif_mal_kabuller(siparis_no):
             raise IslemYapilamazError(
                 f"{siparis_no}: siparişin iptal edilmemiş mal kabulü var, "
-                f"önce mal kabulü iptal edin"
+                f"önce mal kabulü iptal edin",
+                kod="11c",
             )
         for fatura in self.faturalar.values():
             if fatura.durum == "REDDEDILDI" or fatura.iptal_bilgisi.iptal_edildi:
@@ -980,12 +1068,14 @@ class SatinAlmaServisi:
             if fatura.siparis_no == siparis_no:
                 raise IslemYapilamazError(
                     f"{siparis_no}: siparişin aktif faturası var "
-                    f"({fatura.fatura_no}), önce faturayı iptal edin"
+                    f"({fatura.fatura_no}), önce faturayı iptal edin",
+                    kod="11c",
                 )
         self._gerekceyi_dogrula(
             gerekce=gerekce,
             notu=notu,
             gecerli_gerekceler=IPTAL_GEREKCELERI["SIPARIS"],
+            kod="12a",
         )
         siparis.iptal_bilgisi.iptal_et(gerekce, notu, tarih)
         self._kaydet()
@@ -1021,15 +1111,17 @@ class SatinAlmaServisi:
         """
         if tarih is None:
             tarih = date.today().isoformat()
-        mal_kabul = self._kayit_bul(self.mal_kabuller, mal_kabul_no)
+        mal_kabul = self._kayit_bul(self.mal_kabuller, mal_kabul_no, kod="15a")
         if mal_kabul.iptal_bilgisi.iptal_edildi:
             raise IslemYapilamazError(
-                f"{mal_kabul_no}: mal kabul iptal edilmiş, karar verilemez"
+                f"{mal_kabul_no}: mal kabul iptal edilmiş, karar verilemez",
+                kod="15b",
             )
         if karar not in KARANTINA_KARAR_GEREKCELERI:
             raise GecersizGirisError(
                 f"Geçersiz karar: {karar}; geçerli olanlar: "
-                f"{', '.join(KARANTINA_KARAR_GEREKCELERI)}"
+                f"{', '.join(KARANTINA_KARAR_GEREKCELERI)}",
+                kod="15c",
             )
 
         bulunan_kalem = None
@@ -1038,7 +1130,8 @@ class SatinAlmaServisi:
                 bulunan_kalem = kalem
         if bulunan_kalem is None:
             raise IslemYapilamazError(
-                f"{mal_kabul_no}: {mal_kabul_kalem_no} numaralı kalem yok"
+                f"{mal_kabul_no}: {mal_kabul_kalem_no} numaralı kalem yok",
+                kod="15b",
             )
 
         karar_toplami = Decimal("0")
@@ -1050,17 +1143,20 @@ class SatinAlmaServisi:
         if kalan == 0:
             raise IslemYapilamazError(
                 f"{mal_kabul_no} kalem {mal_kabul_kalem_no}: karar bekleyen "
-                f"karantina yok"
+                f"karantina yok",
+                kod="15b",
             )
         if miktar <= 0 or miktar > kalan:
             raise GecersizGirisError(
                 f"Karar miktarı 0'dan büyük ve kalan karantinadan ({kalan}) "
-                f"fazla olmamalı; girilen: {miktar}"
+                f"fazla olmamalı; girilen: {miktar}",
+                kod="15c",
             )
         self._gerekceyi_dogrula(
             gerekce=gerekce,
             notu=notu,
             gecerli_gerekceler=KARANTINA_KARAR_GEREKCELERI[karar],
+            kod="15c",
         )
 
         karantina_karari = KarantinaKarari(
@@ -1095,12 +1191,13 @@ class SatinAlmaServisi:
             IslemYapilamazError: Fatura eşleşmemiş, reddedilmiş ya da iptal
                 edilmişse (16b).
         """
-        fatura = self._kayit_bul(self.faturalar, fatura_no)
+        fatura = self._kayit_bul(self.faturalar, fatura_no, kod="16a")
         if (fatura.iptal_bilgisi.iptal_edildi
                 or fatura.durum not in ("BLOKE", "ONAYLANDI", "SERBEST")):
             raise IslemYapilamazError(
                 f"{fatura_no}: ayrıntı sadece eşleşmiş ve aktif faturada "
-                f"gösterilir (şu an {fatura.durum})"
+                f"gösterilir (şu an {fatura.durum})",
+                kod="16b",
             )
         return self._eslestirme_sonucu_hesapla(fatura)
 

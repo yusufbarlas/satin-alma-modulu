@@ -1,7 +1,12 @@
+"""Satın Alma Modülü'nün sabit değerleri ve listeleri.
+
+Ayar değişince kod değişmez (ilke 6). Bu dosyada hesap,
+fonksiyon ve dosya işi yoktur.
+"""
 from decimal import Decimal
 
 KALEM_NO_ARTISI = 10
-VERI_SURUMU = 1
+VERI_SURUMU = 2
 VERI_DOSYASI = "veri.json"
 TEST_VERI_DOSYASI = "test_veri.json"
 KUCUK_FARK_ESIGI = Decimal("10")
@@ -11,10 +16,13 @@ ONEKLER = {
     "siparis": "SAS",
     "mal_kabul": "MKB",
     "fatura": "FTR",
+    "talep": "TLP",
+    "teklif": "TKL",
+    "odeme": "ODM",
 }
 
 ISKONTO_TURLERI = ("ORAN", "TUTAR")
-
+ODEME_YONTEMLERI = ("HAVALE_EFT", "NAKIT")
 
 TOLERANSLAR = {
     "SARF": {
@@ -52,6 +60,18 @@ KARAR_GEREKCELERI = {
         "MAL_TESLIM_EDILMEDI": "Mal teslim edilmedi",
         "DIGER": "Diğer",
     },
+    "TALEP_RED": {
+        "BUTCE_YOK": "Bütçe yok",
+        "IHTIYAC_YOK": "İhtiyaç yok",
+        "STOKTA_VAR": "Malzeme stokta var",
+        "DIGER": "Diğer",
+    },
+    "TEKLIF_RED": {
+        "DAHA_IYI_TEKLIF_VAR": "Daha iyi bir teklif var",
+        "TESLIM_SURESI_UYGUN_DEGIL": "Teslim süresi uygun değil",
+        "SARTLAR_UYGUN_DEGIL": "Teklif şartları uygun değil",
+        "DIGER": "Diğer",
+    },
 }
 
 IPTAL_GEREKCELERI = {
@@ -72,6 +92,25 @@ IPTAL_GEREKCELERI = {
         "YANLIS_SIPARIS_SECILDI": "Yanlış sipariş seçildi",
         "MIKTAR_FIYAT_YANLIS_GIRILDI": "Miktar / fiyat yanlış girildi",
         "MUKERRER_GIRIS": "Mükerrer giriş",
+        "DIGER": "Diğer",
+    },
+    "TALEP": {
+        "MIKTAR_YANLIS_GIRILDI": "Miktar yanlış girildi",
+        "MUKERRER_GIRIS": "Mükerrer giriş",
+        "VAZGECILDI": "Talepten vazgeçildi",
+        "DIGER": "Diğer",
+    },
+    "TEKLIF": {
+        "YANLIS_TEDARIKCI_SECILDI": "Yanlış tedarikçi seçildi",
+        "MIKTAR_FIYAT_YANLIS_GIRILDI": "Miktar / fiyat yanlış girildi",
+        "MUKERRER_GIRIS": "Mükerrer giriş",
+        "DIGER": "Diğer",
+    },
+    "ODEME": {
+        "YANLIS_FATURA_SECILDI": "Yanlış fatura seçildi",
+        "TUTAR_YANLIS_GIRILDI": "Tutar yanlış girildi",
+        "MUKERRER_GIRIS": "Mükerrer giriş",
+        "BANKA_IADESI": "Banka ödemeyi iade etti",
         "DIGER": "Diğer",
     },
 }

@@ -1283,7 +1283,7 @@ def test_f2(tmp_path):
 
 
 def test_f3(tmp_path):
-    """F3 — veri sürümü: kaydedilen dosyada "veri_surumu": 1 yazar (R5).
+    """F3 — veri sürümü: kaydedilen dosyada "veri_surumu": 2 yazar (R5, E131).
 
     Ortak test verisi kurulur (her işlem dosyaya kaydedilir), sonra
     dosya doğrudan JSON olarak okunur.
@@ -1291,7 +1291,7 @@ def test_f3(tmp_path):
     veri_dosyasi = tmp_path / "veri.json"
     baslangic_verisini_kur(veri_dosyasi)
     ham_veri = json.loads(veri_dosyasi.read_text(encoding="utf-8"))
-    assert ham_veri["veri_surumu"] == 1
+    assert ham_veri["veri_surumu"] == 2
 
 
 def test_f4(tmp_path):
@@ -1299,7 +1299,7 @@ def test_f4(tmp_path):
 
     Dosya yokken servis hata vermeden açılır ve dosya oluşturmaz; bütün
     listeler boş, ilk tedarikçi TED-0001 alır. İlk kayıttan sonra dosya
-    oluşur ve içinde "veri_surumu": 1 yazar (4.5, E6, R5).
+    oluşur ve içinde "veri_surumu": 2 yazar (4.5, E6, R5, E131).
     """
     veri_dosyasi = tmp_path / "veri.json"
     servis = SatinAlmaServisi(veri_dosyasi)
@@ -1313,7 +1313,7 @@ def test_f4(tmp_path):
     assert eklenen_tedarikci.tedarikci_kodu == "TED-0001"
     assert veri_dosyasi.exists()
     ham_veri = json.loads(veri_dosyasi.read_text(encoding="utf-8"))
-    assert ham_veri["veri_surumu"] == 1
+    assert ham_veri["veri_surumu"] == 2
 
 
 def test_g1(tmp_path):

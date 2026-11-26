@@ -4,3 +4,4 @@ __pycache__/
 veri.json
 test_veri.json
 Claude outputs/
+*.tmp

@@ -31,31 +31,34 @@ def tutara_cevir(metin):
         temiz_metin = temiz_metin[1:]
 
     if temiz_metin.count(",") > 1:
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}")
+        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
 
     virgul_parcalari = temiz_metin.split(",")
     if virgul_parcalari[0] == "":
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}")
+        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
     if "," in temiz_metin and not virgul_parcalari[1].isdigit():
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}")
+        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
 
     gruplar = virgul_parcalari[0].split(".")
     if len(gruplar) == 1 and not gruplar[0].isdigit():
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}")
+        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
     if len(gruplar) > 1 and (
         not 1 <= len(gruplar[0]) <= 3 or not gruplar[0].isdigit()
     ):
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}")
+        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
     for grup in gruplar[1:]:
         if len(grup) != 3 or not grup.isdigit():
-            raise GecersizGirisError(f"Geçersiz tutar: {metin}")
+            raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
 
     noktasiz_metin = temiz_metin.replace(".", "")
     python_bicimi = noktasiz_metin.replace(",", ".")
     try:
         tutar = Decimal(python_bicimi)
     except InvalidOperation as hata:
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}") from hata
+        raise GecersizGirisError(
+            f"Geçersiz tutar: {metin}",
+            kod="25a",
+        ) from hata
     if eksi_var:
         tutar = -tutar
     return tutar
@@ -82,7 +85,10 @@ def net_fiyat_hesapla(birim_fiyat, iskonto_turu, iskonto_degeri):
         GecersizGirisError: İskonto türü ISKONTO_TURLERI'nde yoksa.
     """
     if iskonto_turu not in ISKONTO_TURLERI:
-        raise GecersizGirisError(f"Geçersiz iskonto türü: {iskonto_turu}")
+        raise GecersizGirisError(
+            f"Geçersiz iskonto türü: {iskonto_turu}",
+            kod="13a",
+        )
     if iskonto_turu == "ORAN":
         indirim = birim_fiyat * iskonto_degeri / 100
     else:
@@ -107,17 +113,22 @@ def iskontoyu_dogrula(birim_fiyat, iskonto_turu, iskonto_degeri):
             türünün aralığı dışındaysa (hata tablosu 13a).
     """
     if iskonto_turu not in ISKONTO_TURLERI:
-        raise GecersizGirisError(f"Geçersiz iskonto türü: {iskonto_turu}")
+        raise GecersizGirisError(
+            f"Geçersiz iskonto türü: {iskonto_turu}",
+            kod="13a",
+        )
     if iskonto_turu == "ORAN" and not 0 <= iskonto_degeri < 100:
         raise GecersizGirisError(
             f"Geçersiz iskonto oranı: {iskonto_degeri} "
-            "(0 ile 100 arasında olmalı, 100 hariç)"
+            "(0 ile 100 arasında olmalı, 100 hariç)",
+            kod="13a",
         )
     if iskonto_turu == "TUTAR" and not 0 <= iskonto_degeri < birim_fiyat:
         raise GecersizGirisError(
             f"Geçersiz iskonto tutarı: {iskonto_degeri} "
             f"(0 ile birim fiyat {birim_fiyat} arasında olmalı, "
-            "birim fiyat hariç)"
+            "birim fiyat hariç)",
+            kod="13a",
         )
 
 

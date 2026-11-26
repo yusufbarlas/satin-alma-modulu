@@ -1,4 +1,5 @@
 import json
+import os 
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 
@@ -13,9 +14,15 @@ from modeller import (
     MalKabulDagitimi,
     MalKabulKalemi,
     NedenliMiktar,
+    Odeme,
+    OdemeKalemi,
     Siparis,
     SiparisKalemi,
+    Talep,
+    TalepKalemi,
     Tedarikci,
+    Teklif,
+    TeklifKalemi,
     ToleransKopyasi,
 )
 
@@ -28,8 +35,9 @@ def sozluge_cevir(veri):
 
     Args:
         veri: Servisin verisi; anahtarlar veri_surumu, sayaclar ve
-            beş belge listesi (tedarikciler, siparisler, mal_kabuller,
-            faturalar, karantina_kararlari).
+            sekiz belge listesi (tedarikciler, siparisler, mal_kabuller,
+            faturalar, karantina_kararlari, talepler, teklifler,
+            odemeler). Yeni liste eklenince bu fonksiyon değişmez.
 
     Returns:
         Aynı anahtarlarla, nesneleri sözlüğe çevrilmiş yeni sözlük.
@@ -47,25 +55,37 @@ def sozluge_cevir(veri):
 
 
 def kaydet(veri, dosya_yolu):
-    """Servisin verisini JSON dosyasına yazar.
+    """Servisin verisini JSON dosyasına güvenli yazar (B3, E126).
 
-    Önce nesneler sözlüğe çevrilir; Decimal'ler yazılırken metne
-    döner (default=str). Dosya varsa üstüne yazılır.
+    Önce nesneler sözlüğe çevrilir; Decimal'ler yazılırken metne döner
+    (default=str). Veri önce yanındaki geçici dosyaya ("veri.json.tmp")
+    yazılır ve diske indirilir (flush + fsync); yazma bitince os.replace
+    geçici dosyayı tek hamlede asıl dosyanın yerine koyar (atomik). Yazma
+    yarıda kalırsa asıl dosya eski hâliyle durur; geçici dosya silinir.
 
     Args:
         veri: Servisin verisi (sozluge_cevir'deki şema).
-        dosya_yolu: Yazılacak dosya, ör. "veri.json".
+        dosya_yolu: Yazılacak dosya, ör. "veri.json" ya da Path.
 
     Raises:
-        DepolamaError: Dosya yazılamazsa (klasör yok, izin yok; 10b).
+        DepolamaError: Dosya yazılamazsa (klasör yok, izin yok, disk dolu;
+            10b). Asıl dosya değişmez.
     """
     sozluk = sozluge_cevir(veri)
+    gecici_yol = f"{dosya_yolu}.tmp"
     try:
-        with open(dosya_yolu, "w", encoding="utf-8") as dosya:
+        with open(gecici_yol, "w", encoding="utf-8") as dosya:
             json.dump(sozluk, dosya, default=str, ensure_ascii=False, indent=4)
+            dosya.flush()
+            os.fsync(dosya.fileno())
+        os.replace(gecici_yol, dosya_yolu)
     except OSError as hata:
-        raise DepolamaError(f"Kaydedilemedi: {dosya_yolu}") from hata
-
+        if os.path.exists(gecici_yol):
+            os.remove(gecici_yol)
+        raise DepolamaError(
+            f"Kaydedilemedi: {dosya_yolu}",
+            kod="10b",
+        ) from hata
 
 def nesneye_cevir(ham_veri):
     """JSON'dan okunan sözlüğü servisin verisine (nesnelere) çevirir.
@@ -82,14 +102,17 @@ def nesneye_cevir(ham_veri):
         Aynı anahtarlarla, belgeleri nesne olan sözlük.
 
     Raises:
-        DepolamaError: veri_surumu programınkine eşit değilse (10d).
+        DepolamaError: veri_surumu programınkine eşit değilse (10d); sürüm 1
+            dosyayı yukle buraya gelmeden dönüştürür, yani 10d sadece
+            bilinmeyen ya da programdan yeni sürümde çıkar.
         KeyError, InvalidOperation, TypeError: Yapı bozuksa; yukle bunları
             DepolamaError'a çevirir (10c).
     """
     if ham_veri["veri_surumu"] != VERI_SURUMU:
         raise DepolamaError(
             f"Veri dosyasının sürümü {ham_veri['veri_surumu']}, "
-            f"programın sürümü {VERI_SURUMU}; dosya okunamıyor"
+            f"programın sürümü {VERI_SURUMU}; dosya okunamıyor",
+            kod="10d",
         )
     yeni = {}
     yeni["veri_surumu"] = ham_veri["veri_surumu"]
@@ -132,6 +155,10 @@ def nesneye_cevir(ham_veri):
                 miktar_tavani=(
                     Decimal(miktar_tavani) if miktar_tavani is not None else None
                 ),
+                talep_no=siparis_kalem_sozlugu["talep_no"],
+                talep_kalem_no=siparis_kalem_sozlugu["talep_kalem_no"],
+                teklif_no=siparis_kalem_sozlugu["teklif_no"],
+                teklif_kalem_no=siparis_kalem_sozlugu["teklif_kalem_no"],
             )
             kalemler.append(siparis_kalemi)
 
@@ -258,6 +285,114 @@ def nesneye_cevir(ham_veri):
         )
         karantina_kararlari.append(karantina_karari)
     yeni["karantina_kararlari"] = karantina_kararlari
+
+    talepler = []
+    for talep_sozlugu in ham_veri["talepler"]:
+        kalemler = []
+        for talep_kalem_sozlugu in talep_sozlugu["talep_kalemleri"]:
+            tahmini_fiyat = talep_kalem_sozlugu["tahmini_birim_fiyat"]
+            talep_kalemi = TalepKalemi(
+                kalem_no=talep_kalem_sozlugu["kalem_no"],
+                malzeme_adi=talep_kalem_sozlugu["malzeme_adi"],
+                miktar=Decimal(talep_kalem_sozlugu["miktar"]),
+                birim=talep_kalem_sozlugu["birim"],
+                kategori=talep_kalem_sozlugu["kategori"],
+                tahmini_birim_fiyat=(
+                    Decimal(tahmini_fiyat) if tahmini_fiyat is not None else None
+                ),
+            )
+            kalemler.append(talep_kalemi)
+
+        iptal_sozlugu = talep_sozlugu["iptal_bilgisi"]
+        iptal_bilgisi = IptalBilgisi(
+            iptal_edildi=iptal_sozlugu["iptal_edildi"],
+            iptal_gerekcesi=iptal_sozlugu["iptal_gerekcesi"],
+            iptal_notu=iptal_sozlugu["iptal_notu"],
+            iptal_tarihi=iptal_sozlugu["iptal_tarihi"],
+        )
+        talep = Talep(
+            talep_no=talep_sozlugu["talep_no"],
+            talep_eden=talep_sozlugu["talep_eden"],
+            talep_kalemleri=kalemler,
+            kayit_tarihi=talep_sozlugu["kayit_tarihi"],
+            durum=talep_sozlugu["durum"],
+            iptal_bilgisi=iptal_bilgisi,
+            karar_gerekcesi=talep_sozlugu["karar_gerekcesi"],
+            karar_notu=talep_sozlugu["karar_notu"],
+            karar_tarihi=talep_sozlugu["karar_tarihi"],
+        )
+        talepler.append(talep)
+    yeni["talepler"] = talepler
+
+    teklifler = []
+    for teklif_sozlugu in ham_veri["teklifler"]:
+        kalemler = []
+        for teklif_kalem_sozlugu in teklif_sozlugu["teklif_kalemleri"]:
+            teklif_kalemi = TeklifKalemi(
+                kalem_no=teklif_kalem_sozlugu["kalem_no"],
+                malzeme_adi=teklif_kalem_sozlugu["malzeme_adi"],
+                miktar=Decimal(teklif_kalem_sozlugu["miktar"]),
+                birim=teklif_kalem_sozlugu["birim"],
+                kategori=teklif_kalem_sozlugu["kategori"],
+                birim_fiyat=Decimal(teklif_kalem_sozlugu["birim_fiyat"]),
+                iskonto_turu=teklif_kalem_sozlugu["iskonto_turu"],
+                iskonto_degeri=Decimal(teklif_kalem_sozlugu["iskonto_degeri"]),
+                talep_no=teklif_kalem_sozlugu["talep_no"],
+                talep_kalem_no=teklif_kalem_sozlugu["talep_kalem_no"],
+            )
+            kalemler.append(teklif_kalemi)
+
+        iptal_sozlugu = teklif_sozlugu["iptal_bilgisi"]
+        iptal_bilgisi = IptalBilgisi(
+            iptal_edildi=iptal_sozlugu["iptal_edildi"],
+            iptal_gerekcesi=iptal_sozlugu["iptal_gerekcesi"],
+            iptal_notu=iptal_sozlugu["iptal_notu"],
+            iptal_tarihi=iptal_sozlugu["iptal_tarihi"],
+        )
+        teklif = Teklif(
+            teklif_no=teklif_sozlugu["teklif_no"],
+            tedarikci_kodu=teklif_sozlugu["tedarikci_kodu"],
+            teklif_kalemleri=kalemler,
+            kayit_tarihi=teklif_sozlugu["kayit_tarihi"],
+            durum=teklif_sozlugu["durum"],
+            tedarikci_teklif_no=teklif_sozlugu["tedarikci_teklif_no"],
+            iptal_bilgisi=iptal_bilgisi,
+            karar_gerekcesi=teklif_sozlugu["karar_gerekcesi"],
+            karar_notu=teklif_sozlugu["karar_notu"],
+            karar_tarihi=teklif_sozlugu["karar_tarihi"],
+        )
+        teklifler.append(teklif)
+    yeni["teklifler"] = teklifler
+
+    odemeler = []
+    for odeme_sozlugu in ham_veri["odemeler"]:
+        kalemler = []
+        for odeme_kalem_sozlugu in odeme_sozlugu["odeme_kalemleri"]:
+            odeme_kalemi = OdemeKalemi(
+                kalem_no=odeme_kalem_sozlugu["kalem_no"],
+                fatura_no=odeme_kalem_sozlugu["fatura_no"],
+                tutar=Decimal(odeme_kalem_sozlugu["tutar"]),
+            )
+            kalemler.append(odeme_kalemi)
+
+        iptal_sozlugu = odeme_sozlugu["iptal_bilgisi"]
+        iptal_bilgisi = IptalBilgisi(
+            iptal_edildi=iptal_sozlugu["iptal_edildi"],
+            iptal_gerekcesi=iptal_sozlugu["iptal_gerekcesi"],
+            iptal_notu=iptal_sozlugu["iptal_notu"],
+            iptal_tarihi=iptal_sozlugu["iptal_tarihi"],
+        )
+        odeme = Odeme(
+            odeme_no=odeme_sozlugu["odeme_no"],
+            tedarikci_kodu=odeme_sozlugu["tedarikci_kodu"],
+            odeme_yontemi=odeme_sozlugu["odeme_yontemi"],
+            odeme_kalemleri=kalemler,
+            kayit_tarihi=odeme_sozlugu["kayit_tarihi"],
+            odeme_notu=odeme_sozlugu["odeme_notu"],
+            iptal_bilgisi=iptal_bilgisi,
+        )
+        odemeler.append(odeme)
+    yeni["odemeler"] = odemeler
     return yeni
 
 
@@ -269,25 +404,65 @@ def bos_veri_olustur():
     "-0001" olur.
 
     Returns:
-        7 anahtarlı sözlük: veri_surumu, sayaclar (TED, SAS, MKB, FTR = 0)
-        ve beş boş liste (tedarikciler, siparisler, mal_kabuller,
-        faturalar, karantina_kararlari).
+        10 anahtarlı sözlük: veri_surumu, sayaclar (TED, SAS, MKB, FTR,
+        TLP, TKL, ODM = 0) ve sekiz boş liste (tedarikciler, siparisler,
+        mal_kabuller, faturalar, karantina_kararlari, talepler, teklifler,
+        odemeler).
     """
     return {
         "veri_surumu": VERI_SURUMU,
-        "sayaclar": {"TED": 0, "SAS": 0, "MKB": 0, "FTR": 0},
+        "sayaclar": {
+            "TED": 0, "SAS": 0, "MKB": 0, "FTR": 0,
+            "TLP": 0, "TKL": 0, "ODM": 0,
+        },
         "tedarikciler": [],
         "siparisler": [],
         "mal_kabuller": [],
         "faturalar": [],
         "karantina_kararlari": [],
+        "talepler": [],
+        "teklifler": [],
+        "odemeler": [],
     }
+
+def surum_1den_2ye(ham_veri):
+    """Sürüm 1 veri dosyasını sürüm 2 şekline getirir (v1b, E120, E131).
+
+    Eski veriye dokunmaz, sadece eksikleri ekler: talep, teklif ve ödeme
+    listeleri boş, sayaçları 0; her sipariş kalemine dört bağ alanı None
+    (talepsiz sipariş). Etiket doğrudan 2 yazılır, VERI_SURUMU'ndan
+    alınmaz: bu adım her zaman 1'den 2'ye. Dosyaya yazmaz; ilk kayıtta
+    servis dosyayı sürüm 2 olarak yazar.
+
+    Args:
+        ham_veri: json.load'un döndürdüğü sürüm 1 sözlüğü.
+
+    Returns:
+        Aynı sözlük, sürüm 2 şeklinde.
+    """
+    ham_veri["veri_surumu"] = 2
+    ham_veri["sayaclar"]["TLP"] = 0
+    ham_veri["sayaclar"]["TKL"] = 0
+    ham_veri["sayaclar"]["ODM"] = 0
+    ham_veri["talepler"] = []
+    ham_veri["teklifler"] = []
+    ham_veri["odemeler"] = []
+    for siparis in ham_veri["siparisler"]:
+        for siparis_kalemi in siparis["siparis_kalemleri"]:
+            siparis_kalemi["talep_no"] = None
+            siparis_kalemi["talep_kalem_no"] = None
+            siparis_kalemi["teklif_no"] = None
+            siparis_kalemi["teklif_kalem_no"] = None
+    return ham_veri
+
 
 def yukle(dosya_yolu):
     """Veri dosyasını okuyup servisin verisine çevirir.
 
     Dosya yoksa boş veriyle başlar (ilk açılış, F4). Dosya bozuksa asla
     boş başlamaz, DepolamaError verir; dosyaya dokunulmaz (F2).
+    Sürüm 1 dosya önce surum_1den_2ye ile sürüm 2 şekline getirilir
+    (E131); v2'de altına "sürüm 2 ise 2'den 3'e" satırı eklenir.
 
     Args:
         dosya_yolu: Okunacak dosya, ör. "veri.json".
@@ -307,13 +482,17 @@ def yukle(dosya_yolu):
         return bos_veri_olustur()
     except json.JSONDecodeError as hata:
         raise DepolamaError(
-            f"Veri dosyası okunamadı (JSON bozuk): {dosya_yolu}"
+            f"Veri dosyası okunamadı (JSON bozuk): {dosya_yolu}",
+            kod="10a",
         ) from hata
     try:
+        if ham_veri["veri_surumu"] == 1:
+            ham_veri = surum_1den_2ye(ham_veri)
         veri = nesneye_cevir(ham_veri)
     except (KeyError, InvalidOperation, TypeError) as hata:
         raise DepolamaError(
-            f"Veri dosyasının yapısı bozuk: {dosya_yolu}"
+            f"Veri dosyasının yapısı bozuk: {dosya_yolu}",
+            kod="10c",
         ) from hata
     return veri
 
@@ -347,11 +526,23 @@ if __name__ == "__main__":
     kaydet(veri, "test_veri.json")
     print(yukle("test_veri.json") == veri)  # True
 
+    print("--- sürüm 1 dosyası dönüştürülerek açılır ---")
+    surum_1_metni = (
+        '{"veri_surumu": 1, "sayaclar": {"TED": 0, "SAS": 0, "MKB": 0, "FTR": 0}, '
+        '"tedarikciler": [], "siparisler": [], "mal_kabuller": [], '
+        '"faturalar": [], "karantina_kararlari": []}'
+    )
+    with open("test_veri.json", "w", encoding="utf-8") as dosya:
+        dosya.write(surum_1_metni)
+    donusen = yukle("test_veri.json")
+    print(donusen["veri_surumu"], donusen["sayaclar"], donusen["talepler"])
+    # 2 {'TED': 0, 'SAS': 0, 'MKB': 0, 'FTR': 0, 'TLP': 0, 'TKL': 0, 'ODM': 0} []
+
     print("--- hata yolları ---")
     denemeler = [
         ("bozuk JSON (10a)", "{ bozuk"),
         ("yapısı bozuk (10c)", '{"veri_surumu": 1}'),
-        ("sürüm 2 (10d)", '{"veri_surumu": 2}'),
+        ("programdan yeni sürüm 3 (10d)", '{"veri_surumu": 3}'),
     ]
     for ad, icerik in denemeler:
         with open("test_veri.json", "w", encoding="utf-8") as dosya:
