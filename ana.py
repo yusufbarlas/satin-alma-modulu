@@ -13,6 +13,7 @@ from ayarlar import (
     IPTAL_GEREKCELERI,
     KARANTINA_KARAR_GEREKCELERI,
     KARAR_GEREKCELERI,
+    ODEME_YONTEMLERI,
     VERI_DOSYASI,
 )
 from hatalar import (
@@ -135,6 +136,29 @@ def belge_numarasi_sor(bul, soru):
             print(hata)
 
 
+def bos_olabilir_belge_sor(bul, soru):
+    """Belge numarasını sorar; boş Enter ile "yok" denebilir (v1b).
+
+    Talepten sipariş / teklif açarken talep bağı isteğe bağlıdır. Numara
+    yazılırsa kayıt bulunana kadar tekrar sorulur (18a).
+
+    Args:
+        bul: Servisin okuma metodu, ör. servis.talep_bul.
+        soru: Ekrana yazılacak soru.
+
+    Returns:
+        Bulunan belge nesnesi; boş girişte None.
+    """
+    while True:
+        numara = input(soru).strip()
+        if not numara:
+            return None
+        try:
+            return bul(numara)
+        except KayitBulunamadiError as hata:
+            print(hata)
+
+
 def nedenli_metin(nedenli_miktarlar):
     """NedenliMiktar listesini "2 IADE_BEKLIYOR, 2 KARAR_BEKLIYOR" yapar.
 
@@ -172,7 +196,7 @@ def bulgulari_yazdir(sonuc):
 
 
 # ---------------------------------------------------------------------------
-# Sipariş, mal kabul, fatura
+# Tedarikçi, sipariş, mal kabul, fatura
 # ---------------------------------------------------------------------------
 
 def menu_tedarikci_ekle(servis):
@@ -220,14 +244,18 @@ def tedarikci_sec(servis):
     return secim
 
 
-def siparis_kalemlerini_sor():
-    """Sipariş kalemlerini malzeme adı boş bırakılana kadar sorar.
+def siparis_kalemlerini_sor(tavan_sor=True):
+    """Talepsiz kalemleri malzeme adı boş bırakılana kadar sorar.
 
     İskonto ve miktar tavanı isteğe bağlıdır; boş bırakılan alan sözlüğe
-    konmaz, servis varsayılanı kullanır.
+    konmaz, servis varsayılanı kullanır. Teklifte de kullanılır; teklif
+    kaleminde miktar tavanı olmadığı için orada sorulmaz.
+
+    Args:
+        tavan_sor: False ise miktar tavanı sorulmaz (teklif).
 
     Returns:
-        Kalem sözlüklerinin listesi (siparis_ac'ın beklediği biçim).
+        Kalem sözlüklerinin listesi (siparis_ac / teklif_kaydet biçimi).
     """
     kalemler = []
     while True:
@@ -245,25 +273,91 @@ def siparis_kalemlerini_sor():
         if iskonto_turu.strip():
             kalem["iskonto_turu"] = iskonto_turu.strip().upper()
             kalem["iskonto_degeri"] = tutar_sor("  İskonto değeri: ")
-        miktar_tavani = tutar_sor("  Miktar tavanı (yoksa boş): ",
-                                  bos_olabilir=True)
-        if miktar_tavani is not None:
-            kalem["miktar_tavani"] = miktar_tavani
+        if tavan_sor:
+            miktar_tavani = tutar_sor("  Miktar tavanı (yoksa boş): ",
+                                      bos_olabilir=True)
+            if miktar_tavani is not None:
+                kalem["miktar_tavani"] = miktar_tavani
         kalemler.append(kalem)
+
+
+def talepten_kalemleri_sor(talep):
+    """Talebin satırlarını gösterip her biri için miktar ve fiyat sorar (v1b).
+
+    Malzeme adı, birim ve kategori sorulmaz: servis talepten kopyalar (B6).
+    Miktarı 0 girilen satır alınmaz. Sipariş ve teklif ekranı kullanır.
+
+    Args:
+        talep: Bağlanacak Talep.
+
+    Returns:
+        Bağlı kalem sözlüklerinin listesi (talep_no, talep_kalem_no,
+        miktar, birim_fiyat; isteğe bağlı iskonto).
+    """
+    kalemler = []
+    for talep_kalemi in talep.talep_kalemleri:
+        tahmin = ""
+        if talep_kalemi.tahmini_birim_fiyat is not None:
+            tahmin = f", tahmini {talep_kalemi.tahmini_birim_fiyat}"
+        print(f"Talep kalemi {talep_kalemi.kalem_no} · "
+              f"{talep_kalemi.malzeme_adi} ({talep_kalemi.miktar} "
+              f"{talep_kalemi.birim}{tahmin})")
+        miktar = tutar_sor("  Miktar (almamak için 0): ")
+        if miktar == 0:
+            continue
+        kalem = {
+            "talep_no": talep.talep_no,
+            "talep_kalem_no": talep_kalemi.kalem_no,
+            "miktar": miktar,
+            "birim_fiyat": tutar_sor("  Birim fiyat: "),
+        }
+        iskonto_turu = input("  İskonto türü (ORAN / TUTAR, yoksa boş): ")
+        if iskonto_turu.strip():
+            kalem["iskonto_turu"] = iskonto_turu.strip().upper()
+            kalem["iskonto_degeri"] = tutar_sor("  İskonto değeri: ")
+        kalemler.append(kalem)
+    return kalemler
+
+
+def kalemleri_sor(servis, tavan_sor=True):
+    """Önce isteğe bağlı talep bağını, sonra talepsiz ek kalemleri sorar (v1b).
+
+    Talep numarası boş bırakılırsa bütün kalemler talepsizdir (v1a gibi).
+    Talep yazılırsa onun satırları sorulur; ardından talepte olmayan ek
+    kalem eklenebilir.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+        tavan_sor: siparis_kalemlerini_sor'a geçer (teklifte False).
+
+    Returns:
+        Kalem sözlüklerinin listesi.
+    """
+    talep = bos_olabilir_belge_sor(
+        servis.talep_bul, "Talep numarası (talepsiz için boş Enter): ")
+    kalemler = []
+    if talep is not None:
+        kalemler = talepten_kalemleri_sor(talep)
+        print("Talepte olmayan ek kalem varsa girin.")
+    kalemler += siparis_kalemlerini_sor(tavan_sor=tavan_sor)
+    return kalemler
 
 
 def menu_siparis_ac(servis):
     """Tedarikçi ve kalemleri alıp yeni sipariş açtırır.
 
-    Tedarikçi bulunamazsa (2a) sadece tedarikçi, kalem hatasında (2b-2g,
-    13a) sadece kalemler yeniden sorulur. Kalem no, tolerans ve tarih
-    servisten gelir.
+    Kalemler bir talebe bağlanabilir (v1b, E120): talep numarası verilirse
+    onun satırları sorulur. Tedarikçi bulunamazsa (2a) sadece tedarikçi,
+    kalem ya da bağ giriş hatasında (2b-2g, 13a, 20f, 20h, 20i) sadece
+    kalemler yeniden sorulur. Talep onaysızsa, kalemi başka siparişteyse ya
+    da miktar talebi aşıyorsa (20d, 20c, 20g) ana menü yakalar. Kalem no,
+    tolerans ve tarih servisten gelir.
 
     Args:
         servis: Açık SatinAlmaServisi nesnesi.
     """
     tedarikci_kodu = tedarikci_sec(servis)
-    kalemler = siparis_kalemlerini_sor()
+    kalemler = kalemleri_sor(servis)
     while True:
         try:
             siparis = servis.siparis_ac(tedarikci_kodu, kalemler)
@@ -276,7 +370,23 @@ def menu_siparis_ac(servis):
         except GecersizGirisError as hata:
             print(hata)
             print("Kalemleri yeniden girin.")
-            kalemler = siparis_kalemlerini_sor()
+            kalemler = kalemleri_sor(servis)
+
+
+def menu_tekliften_siparis_ac(servis):
+    """Teklif numarasını alıp tekliften sipariş açtırır (v1b, E122).
+
+    Kalemler, tedarikçi ve fiyatlar tekliften gelir; hiçbir şey sorulmaz.
+    Teklif açık değilse ya da siparişe dönüşmüşse (20b), talep kalemi başka
+    siparişteyse (20c) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    teklif = belge_numarasi_sor(servis.teklif_bul, "Teklif numarası: ")
+    siparis = servis.tekliften_siparis_ac(teklif.teklif_no)
+    print(f"Sipariş açıldı: {siparis.siparis_no} · {siparis.durum} "
+          f"· toplam {siparis.genel_toplam()} · teklif {teklif.teklif_no}")
 
 
 def menu_siparis_onayla(servis):
@@ -397,6 +507,237 @@ def menu_fatura(servis):
 
 
 # ---------------------------------------------------------------------------
+# Talep ve teklif (v1b)
+# ---------------------------------------------------------------------------
+
+def talep_kalemlerini_sor():
+    """Talep kalemlerini malzeme adı boş bırakılana kadar sorar (v1b).
+
+    Fiyat zorunlu değildir: tahmini birim fiyat boş bırakılabilir (E121).
+
+    Returns:
+        Kalem sözlüklerinin listesi (talep_ac'ın beklediği biçim).
+    """
+    kalemler = []
+    while True:
+        malzeme_adi = input("Malzeme adı (bitirmek için boş Enter): ")
+        if not malzeme_adi.strip():
+            return kalemler
+        kalem = {
+            "malzeme_adi": malzeme_adi,
+            "miktar": tutar_sor("  Miktar: "),
+            "birim": input("  Birim: "),
+            "kategori": input("  Kategori (SARF / STRATEJIK): ").strip().upper(),
+        }
+        tahmini = tutar_sor("  Tahmini birim fiyat (yoksa boş): ",
+                            bos_olabilir=True)
+        if tahmini is not None:
+            kalem["tahmini_birim_fiyat"] = tahmini
+        kalemler.append(kalem)
+
+
+def menu_talep_ac(servis):
+    """Talep edeni ve kalemleri alıp satın alma talebi açtırır (E121).
+
+    Giriş hatasında (17a, 2b-2g) talep eden ve kalemler yeniden sorulur.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    while True:
+        talep_eden = input("Talep eden (kişi ya da birim): ")
+        kalemler = talep_kalemlerini_sor()
+        try:
+            talep = servis.talep_ac(talep_eden, kalemler)
+            break
+        except GecersizGirisError as hata:
+            print(hata)
+    print(f"Talep açıldı: {talep.talep_no} · {talep.durum} · "
+          f"{len(talep.talep_kalemleri)} kalem")
+
+
+def menu_talep_onayla(servis):
+    """Talep numarasını alıp talebi onaylatır (gerekçe sorulmaz, T2).
+
+    Talep TASLAK değilse ya da iptal edilmişse (18b) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    talep = belge_numarasi_sor(servis.talep_bul, "Talep numarası: ")
+    servis.talep_onayla(talep.talep_no)
+    print(f"Talep onaylandı: {talep.talep_no}")
+
+
+def menu_talep_reddet(servis):
+    """Talebi gerekçeyle reddettirir.
+
+    Gerekçe hatasında (7c) gerekçe yeniden sorulur. Talep TASLAK değilse
+    ya da iptal edilmişse (18b) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    talep = belge_numarasi_sor(servis.talep_bul, "Talep numarası: ")
+    while True:
+        gerekce, notu = gerekce_sor(KARAR_GEREKCELERI["TALEP_RED"])
+        try:
+            servis.talep_reddet(talep.talep_no, gerekce, notu)
+            break
+        except GecersizGirisError as hata:
+            print(hata)
+    print(f"Talep reddedildi: {talep.talep_no}")
+
+
+def menu_teklif_kaydet(servis):
+    """Tedarikçinin teklifini alıp kaydettirir (E122).
+
+    Kalemler bir talebe bağlanabilir; talep numarası verilirse onun
+    satırları sorulur. Tedarikçi ya da bağlı talep bulunamazsa (19a)
+    tedarikçi ve kalemler, giriş hatasında (2b-2g, 13a, 19d, 19e, 19f)
+    kalemler yeniden sorulur. Talep onaysızsa ya da kalem talepte yoksa
+    (19b, 19c) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    tedarikci_kodu = tedarikci_sec(servis)
+    tedarikci_teklif_no = input("Tedarikçinin teklif numarası (boş bırakılabilir): ")
+    if not tedarikci_teklif_no.strip():
+        tedarikci_teklif_no = None
+    kalemler = kalemleri_sor(servis, tavan_sor=False)
+    while True:
+        try:
+            teklif = servis.teklif_kaydet(tedarikci_kodu, kalemler,
+                                          tedarikci_teklif_no=tedarikci_teklif_no)
+            break
+        except KayitBulunamadiError as hata:
+            print(hata)
+            tedarikci_kodu = tedarikci_sec(servis)
+            kalemler = kalemleri_sor(servis, tavan_sor=False)
+        except GecersizGirisError as hata:
+            print(hata)
+            print("Kalemleri yeniden girin.")
+            kalemler = kalemleri_sor(servis, tavan_sor=False)
+    print(f"Teklif kaydedildi: {teklif.teklif_no} · {teklif.durum} "
+          f"· toplam {teklif.genel_toplam()}")
+
+
+def menu_teklif_reddet(servis):
+    """Teklifi gerekçeyle reddettirir.
+
+    Gerekçe hatasında (7c) gerekçe yeniden sorulur. Teklif açık değilse ya
+    da siparişe dönüşmüşse (21b) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    teklif = belge_numarasi_sor(servis.teklif_bul, "Teklif numarası: ")
+    while True:
+        gerekce, notu = gerekce_sor(KARAR_GEREKCELERI["TEKLIF_RED"])
+        try:
+            servis.teklif_reddet(teklif.teklif_no, gerekce, notu)
+            break
+        except GecersizGirisError as hata:
+            print(hata)
+    print(f"Teklif reddedildi: {teklif.teklif_no}")
+
+
+# ---------------------------------------------------------------------------
+# Ödeme (v1b)
+# ---------------------------------------------------------------------------
+
+def odeme_bekleyenleri_yazdir(servis, tedarikci_kodu=None):
+    """Ödeme bekleyen faturaları kalan borçlarıyla yazar (O6).
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+        tedarikci_kodu: Verilirse sadece o tedarikçinin faturaları.
+
+    Returns:
+        Yazılan fatura sayısı.
+    """
+    sayi = 0
+    for fatura in servis.odeme_bekleyen_faturalari_listele():
+        siparis = servis.siparis_bul(fatura.siparis_no)
+        if tedarikci_kodu is not None and siparis.tedarikci_kodu != tedarikci_kodu:
+            continue
+        print(f"  {fatura.fatura_no} · {siparis.tedarikci_kodu} · toplam "
+              f"{fatura.genel_toplam()} · kalan "
+              f"{servis.fatura_kalan_borc(fatura.fatura_no)}")
+        sayi += 1
+    return sayi
+
+
+def odeme_kalemlerini_sor():
+    """Ödenecek faturaları fatura numarası boş bırakılana kadar sorar.
+
+    Returns:
+        Kalem sözlüklerinin listesi (fatura_no, tutar).
+    """
+    kalemler = []
+    while True:
+        fatura_no = input("Fatura numarası (bitirmek için boş Enter): ").strip()
+        if not fatura_no:
+            return kalemler
+        kalemler.append({
+            "fatura_no": fatura_no,
+            "tutar": tutar_sor("  Ödenen tutar: "),
+        })
+
+
+def menu_odeme_kaydet(servis):
+    """Tedarikçiye yapılan ödemeyi kaydettirir (E123).
+
+    Önce o tedarikçinin ödeme bekleyen faturaları kalan borçlarıyla
+    listelenir; tek ödeme birden çok faturayı kapatabilir (O2). Tedarikçi
+    ya da fatura bulunamazsa (23a) tedarikçi ve kalemler, giriş hatasında
+    (23b, 23e) yöntem ve kalemler yeniden sorulur. Fatura ödenemez durumdaysa
+    ya da başka tedarikçininse (23c, 23d) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    tedarikci_kodu = tedarikci_sec(servis)
+    while True:
+        if odeme_bekleyenleri_yazdir(servis, tedarikci_kodu) == 0:
+            print("Bu tedarikçinin ödeme bekleyen faturası yok.")
+            return
+        kalemler = odeme_kalemlerini_sor()
+        yontemler = {}
+        for yontem in ODEME_YONTEMLERI:
+            yontemler[yontem] = yontem
+        odeme_yontemi = secenek_sor(yontemler, "Ödeme yöntemi numarası: ")
+        odeme_notu = input("Not (boş bırakılabilir): ")
+        if not odeme_notu.strip():
+            odeme_notu = None
+        try:
+            odeme = servis.odeme_kaydet(tedarikci_kodu, kalemler, odeme_yontemi,
+                                        odeme_notu=odeme_notu)
+            break
+        except KayitBulunamadiError as hata:
+            print(hata)
+            tedarikci_kodu = tedarikci_sec(servis)
+        except GecersizGirisError as hata:
+            print(hata)
+    print(f"Ödeme kaydedildi: {odeme.odeme_no} · {odeme.odeme_yontemi} "
+          f"· toplam {odeme.toplam()}")
+    for kalem in odeme.odeme_kalemleri:
+        print(f"  {kalem.fatura_no}: ödenen {kalem.tutar} · kalan "
+              f"{servis.fatura_kalan_borc(kalem.fatura_no)}")
+
+
+def menu_odeme_bekleyen_faturalar(servis):
+    """Kalan borcu olan ödenebilir faturaları listeler (ilke 10, O6).
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    if odeme_bekleyenleri_yazdir(servis) == 0:
+        print("Ödeme bekleyen fatura yok.")
+
+
+# ---------------------------------------------------------------------------
 # Kararlar
 # ---------------------------------------------------------------------------
 
@@ -498,14 +839,35 @@ def menu_karantina_karari(servis):
 
 
 # ---------------------------------------------------------------------------
-# İptaller (zincir tersten: fatura → mal kabul → sipariş, R3)
+# İptaller (zincir tersten: ödeme → fatura → mal kabul → sipariş → teklif
+# → talep, R3)
 # ---------------------------------------------------------------------------
+
+def menu_odeme_iptal(servis):
+    """Ödemeyi gerekçeyle iptal ettirir (ters kayıt, v1b).
+
+    Gerekçe hatasında (12a) gerekçe yeniden sorulur. Ödeme zaten iptal
+    edilmişse (24b) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    odeme = belge_numarasi_sor(servis.odeme_bul, "Ödeme numarası: ")
+    while True:
+        gerekce, notu = gerekce_sor(IPTAL_GEREKCELERI["ODEME"])
+        try:
+            servis.odeme_iptal_et(odeme.odeme_no, gerekce, notu)
+            break
+        except GecersizGirisError as hata:
+            print(hata)
+    print(f"Ödeme iptal edildi: {odeme.odeme_no}")
+
 
 def menu_fatura_iptal(servis):
     """Faturayı gerekçeyle iptal ettirir.
 
     Gerekçe hatasında (12a) gerekçe yeniden sorulur. Fatura zaten iptal
-    edilmişse (9b) ana menü yakalar.
+    edilmişse ya da aktif ödemesi varsa (9b, 9c) ana menü yakalar.
 
     Args:
         servis: Açık SatinAlmaServisi nesnesi.
@@ -559,6 +921,46 @@ def menu_siparis_iptal(servis):
         except GecersizGirisError as hata:
             print(hata)
     print(f"Sipariş iptal edildi: {siparis.siparis_no}")
+
+
+def menu_teklif_iptal(servis):
+    """Teklifi gerekçeyle iptal ettirir (v1b).
+
+    Gerekçe hatasında (12a) gerekçe yeniden sorulur. Zaten iptalse ya da
+    bağlı aktif siparişi varsa (22c, 22b) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    teklif = belge_numarasi_sor(servis.teklif_bul, "Teklif numarası: ")
+    while True:
+        gerekce, notu = gerekce_sor(IPTAL_GEREKCELERI["TEKLIF"])
+        try:
+            servis.teklif_iptal_et(teklif.teklif_no, gerekce, notu)
+            break
+        except GecersizGirisError as hata:
+            print(hata)
+    print(f"Teklif iptal edildi: {teklif.teklif_no}")
+
+
+def menu_talep_iptal(servis):
+    """Talebi gerekçeyle iptal ettirir (v1b).
+
+    Gerekçe hatasında (12a) gerekçe yeniden sorulur. Zaten iptalse ya da
+    bağlı aktif teklifi veya siparişi varsa (22c, 22a) ana menü yakalar.
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
+    """
+    talep = belge_numarasi_sor(servis.talep_bul, "Talep numarası: ")
+    while True:
+        gerekce, notu = gerekce_sor(IPTAL_GEREKCELERI["TALEP"])
+        try:
+            servis.talep_iptal_et(talep.talep_no, gerekce, notu)
+            break
+        except GecersizGirisError as hata:
+            print(hata)
+    print(f"Talep iptal edildi: {talep.talep_no}")
 
 
 # ---------------------------------------------------------------------------
@@ -617,21 +1019,38 @@ def menu_karantinadakiler(servis):
 # ---------------------------------------------------------------------------
 
 MENU_SECENEKLERI = [
-    ("1", "Tedarikçi ekle", menu_tedarikci_ekle),
-    ("2", "Sipariş aç", menu_siparis_ac),
-    ("3", "Sipariş onayla", menu_siparis_onayla),
-    ("4", "Mal kabul", menu_mal_kabul),
-    ("5", "Fatura", menu_fatura),
-    ("6", "Fatura ayrıntısı / bloke nedeni", menu_fatura_ayrintisi),
-    ("7", "Faturayı serbest bırak", menu_serbest_birak),
-    ("8", "Faturayı reddet", menu_reddet),
-    ("9", "Karantina kararı", menu_karantina_karari),
-    ("10", "Bekleyen faturalar", menu_bekleyen_faturalar),
-    ("11", "Bloke faturalar", menu_bloke_faturalar),
-    ("12", "Karantinadakiler", menu_karantinadakiler),
-    ("13", "Fatura iptal", menu_fatura_iptal),
-    ("14", "Mal kabul iptal", menu_mal_kabul_iptal),
-    ("15", "Sipariş iptal", menu_siparis_iptal),
+    (None, "Talep ve teklif", None),
+    ("1", "Talep aç", menu_talep_ac),
+    ("2", "Talep onayla", menu_talep_onayla),
+    ("3", "Talep reddet", menu_talep_reddet),
+    ("4", "Teklif kaydet", menu_teklif_kaydet),
+    ("5", "Teklif reddet", menu_teklif_reddet),
+    (None, "Sipariş", None),
+    ("6", "Tedarikçi ekle", menu_tedarikci_ekle),
+    ("7", "Sipariş aç (talepten ya da talepsiz)", menu_siparis_ac),
+    ("8", "Tekliften sipariş aç", menu_tekliften_siparis_ac),
+    ("9", "Sipariş onayla", menu_siparis_onayla),
+    (None, "Mal kabul ve fatura", None),
+    ("10", "Mal kabul", menu_mal_kabul),
+    ("11", "Fatura", menu_fatura),
+    ("12", "Fatura ayrıntısı / bloke nedeni", menu_fatura_ayrintisi),
+    ("13", "Faturayı serbest bırak", menu_serbest_birak),
+    ("14", "Faturayı reddet", menu_reddet),
+    ("15", "Karantina kararı", menu_karantina_karari),
+    (None, "Ödeme", None),
+    ("16", "Ödeme kaydet", menu_odeme_kaydet),
+    (None, "Bekleyen işler", None),
+    ("17", "Bekleyen faturalar (mal bekleyen)", menu_bekleyen_faturalar),
+    ("18", "Bloke faturalar", menu_bloke_faturalar),
+    ("19", "Karantinadakiler", menu_karantinadakiler),
+    ("20", "Ödeme bekleyen faturalar", menu_odeme_bekleyen_faturalar),
+    (None, "İptaller (zincir tersten)", None),
+    ("21", "Ödeme iptal", menu_odeme_iptal),
+    ("22", "Fatura iptal", menu_fatura_iptal),
+    ("23", "Mal kabul iptal", menu_mal_kabul_iptal),
+    ("24", "Sipariş iptal", menu_siparis_iptal),
+    ("25", "Teklif iptal", menu_teklif_iptal),
+    ("26", "Talep iptal", menu_talep_iptal),
 ]
 
 
@@ -641,7 +1060,9 @@ def menuyu_baslat():
     Açılışta veri dosyası okunamazsa (DepolamaError, 10a, 10c) mesaj verip
     durur. Menü fonksiyonlarının yakalamadığı bütün hatalar (ör. sipariş
     zaten onaylı) tek except SatinAlmaError ile yakalanır; mesaj gösterilir
-    ve menüye dönülür (E99). Genel except Exception yok.
+    ve menüye dönülür (E99). Genel except Exception yok. Seçenekler
+    akış sırasıyla gruplanır (talep → ödeme → listeler → iptaller); numarası
+    None olan satır grup başlığıdır, seçilemez.
     """
     try:
         servis = SatinAlmaServisi(VERI_DOSYASI)
@@ -652,7 +1073,10 @@ def menuyu_baslat():
     while True:
         print()
         for numara, baslik, _ in MENU_SECENEKLERI:
-            print(f"{numara:>2} - {baslik}")
+            if numara is None:
+                print(f"— {baslik} —")
+            else:
+                print(f"{numara:>2} - {baslik}")
         print(" 0 - Çıkış")
         secim = input("Seçiminiz: ").strip()
 
