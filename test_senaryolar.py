@@ -13,7 +13,12 @@ from decimal import Decimal
 import pytest
 
 from depolama import bos_veri_olustur, kaydet
-from hatalar import DepolamaError, GecersizGirisError, IslemYapilamazError
+from hatalar import (
+    DepolamaError,
+    GecersizGirisError,
+    IslemYapilamazError,
+    KayitBulunamadiError,
+)
 from modeller import NedenliMiktar, ToleransKopyasi
 from servis import SatinAlmaServisi
 
@@ -2106,3 +2111,22 @@ def test_denetim_b3(tmp_path, monkeypatch):
     assert hata_bilgisi.value.kod == "10b"
     assert dosya_yolu.read_text(encoding="utf-8") == onceki_icerik
     assert not (tmp_path / "veri.json.tmp").exists()
+
+
+def test_denetim_e132_bulunamadi_mesaji(tmp_path):
+    """E132 bulgu 3 — bulunamadı mesajı kaydın türünü söyler; boş numarada "girilmedi"."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+
+    with pytest.raises(KayitBulunamadiError) as hata_bilgisi:
+        servis.siparis_bul("SAS-0099")
+    assert str(hata_bilgisi.value) == "Sipariş bulunamadı: SAS-0099"
+    assert hata_bilgisi.value.kod == "27a"
+
+    with pytest.raises(KayitBulunamadiError) as hata_bilgisi:
+        servis.fatura_bul("")
+    assert str(hata_bilgisi.value) == "Fatura numarası girilmedi"
+
+    with pytest.raises(KayitBulunamadiError) as hata_bilgisi:
+        servis.siparis_onayla("12")
+    assert str(hata_bilgisi.value) == "Sipariş bulunamadı: 12"
+    assert hata_bilgisi.value.kod == "3a"

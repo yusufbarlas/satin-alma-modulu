@@ -13,7 +13,8 @@ def tutara_cevir(metin):
     (eksi tutarın reddi servisin işidir). Başka karakter kabul edilmez.
 
     Örnek: "1.250,50" → Decimal("1250.50"), "1.000" → Decimal("1000"),
-    "12.50" → GecersizGirisError.
+    "12.50" → GecersizGirisError. Hata mesajı doğru biçimden bir örnek
+    gösterir (E132).
 
     Args:
         metin: Kullanıcının yazdığı metin, ör. " 1.250,50 ".
@@ -31,24 +32,42 @@ def tutara_cevir(metin):
         temiz_metin = temiz_metin[1:]
 
     if temiz_metin.count(",") > 1:
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
+        raise GecersizGirisError(
+            f"Geçersiz tutar: {metin} (örnek: 120,50 ya da 1.250,50)",
+            kod="25a",
+        )
 
     virgul_parcalari = temiz_metin.split(",")
     if virgul_parcalari[0] == "":
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
+        raise GecersizGirisError(
+            f"Geçersiz tutar: {metin} (örnek: 120,50 ya da 1.250,50)",
+            kod="25a",
+        )
     if "," in temiz_metin and not virgul_parcalari[1].isdigit():
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
+        raise GecersizGirisError(
+            f"Geçersiz tutar: {metin} (örnek: 120,50 ya da 1.250,50)",
+            kod="25a",
+        )
 
     gruplar = virgul_parcalari[0].split(".")
     if len(gruplar) == 1 and not gruplar[0].isdigit():
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
+        raise GecersizGirisError(
+            f"Geçersiz tutar: {metin} (örnek: 120,50 ya da 1.250,50)",
+            kod="25a",
+        )
     if len(gruplar) > 1 and (
         not 1 <= len(gruplar[0]) <= 3 or not gruplar[0].isdigit()
     ):
-        raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
+        raise GecersizGirisError(
+            f"Geçersiz tutar: {metin} (örnek: 120,50 ya da 1.250,50)",
+            kod="25a",
+        )
     for grup in gruplar[1:]:
         if len(grup) != 3 or not grup.isdigit():
-            raise GecersizGirisError(f"Geçersiz tutar: {metin}", kod="25a")
+            raise GecersizGirisError(
+                f"Geçersiz tutar: {metin} (örnek: 120,50 ya da 1.250,50)",
+                kod="25a",
+            )
 
     noktasiz_metin = temiz_metin.replace(".", "")
     python_bicimi = noktasiz_metin.replace(",", ".")
@@ -56,7 +75,7 @@ def tutara_cevir(metin):
         tutar = Decimal(python_bicimi)
     except InvalidOperation as hata:
         raise GecersizGirisError(
-            f"Geçersiz tutar: {metin}",
+            f"Geçersiz tutar: {metin} (örnek: 120,50 ya da 1.250,50)",
             kod="25a",
         ) from hata
     if eksi_var:

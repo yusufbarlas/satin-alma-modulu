@@ -54,7 +54,7 @@ pytest'in açtığı geçici bir klasörde çalışır; gerçek veriye dokunmaz.
 ## Elle test (menü)
 
 `python ana.py` ile boş veri dosyasından başlanarak sırayla denendi; ikinci
-oturumda program kapatılıp açıldı. Ekran çıktısının tamamı: `elle-test-kaydi.md`.
+oturumda program kapatılıp açıldı. Ekran çıktısının tamamı: `v1a-elle-test-kaydi.md`.
 
 | # | Senaryo | Menü | Sonuç |
 |---|---|---|---|

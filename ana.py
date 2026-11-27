@@ -5,8 +5,10 @@ kuralları servis kontrol eder. Menü sadece soruyu sorar, hatayı yakalar ve
 hata sınıfına göre davranır (hatalar tabındaki "Menü ne yapar" sütunu):
 GecersizGirisError ve KayitBulunamadiError gelince alan tekrar sorulur;
 IslemYapilamazError ana menüde yakalanır, mesaj gösterilip menüye dönülür.
-Menü servisin iç verisine dokunmaz; okumak için genel metotları çağırır
-(E100, E112).
+Hata mesajları "Hata: " ile başlar (E132). Numara sorulan her ekranda boş
+Enter ile vazgeçilir: Vazgecildi ana menüde yakalanır, hiçbir şey
+kaydedilmez. Menü servisin iç verisine dokunmaz; okumak için genel
+metotları çağırır (E100, E112).
 """
 
 from ayarlar import (
@@ -24,6 +26,27 @@ from hatalar import (
 )
 from para import tutara_cevir
 from servis import SatinAlmaServisi
+
+
+class Vazgecildi(Exception):
+    """Kullanıcı numara sorusunu boş geçti: ana menüye dönülür.
+
+    İş hatası değil, kullanıcının kararıdır; bu yüzden SatinAlmaError
+    ailesinden değil Exception'dan türer ve sadece menüde yaşar (E132).
+    Fırlatan: belge_numarasi_sor, tedarikci_sec. Yakalayan: menuyu_baslat.
+    """
+
+
+def hata_yaz(hata):
+    """Hata mesajını başına "Hata: " koyarak yazar (E132).
+
+    Başarı satırlarından ayırt edilsin diye bütün hata mesajları buradan
+    geçer.
+
+    Args:
+        hata: Yakalanan hata ya da mesaj metni.
+    """
+    print(f"Hata: {hata}")
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +75,7 @@ def tutar_sor(soru, bos_olabilir=False):
         try:
             return tutara_cevir(metin)
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
 
 
 def tam_sayi_sor(soru):
@@ -69,7 +92,7 @@ def tam_sayi_sor(soru):
         try:
             return int(metin)
         except ValueError:
-            print(f"'{metin}' geçersiz; bir sayı yazın.")
+            hata_yaz(f"'{metin}' geçersiz; bir sayı yazın.")
 
 
 def secenek_sor(secenekler, soru):
@@ -96,7 +119,7 @@ def secenek_sor(secenekler, soru):
         numara = tam_sayi_sor(soru)
         if 1 <= numara <= len(kodlar):
             return kodlar[numara - 1]
-        print(f"Geçersiz numara; 1 ile {len(kodlar)} arasında olmalı.")
+        hata_yaz(f"Geçersiz numara; 1 ile {len(kodlar)} arasında olmalı.")
 
 
 def gerekce_sor(gerekceler):
@@ -121,26 +144,35 @@ def gerekce_sor(gerekceler):
 def belge_numarasi_sor(bul, soru):
     """Belge numarasını kayıt bulunana kadar sorar (7a, 8a, 9a, 11a, 15a, 16a).
 
+    Numara büyük harfe çevrilir ("ftr-0001" de bulunur). Boş Enter
+    vazgeçmektir: Vazgecildi fırlatılır, ana menü yakalar (E132).
+
     Args:
         bul: Servisin okuma metodu, ör. servis.fatura_bul.
         soru: Ekrana yazılacak soru, ör. "Fatura numarası: ".
 
     Returns:
         Bulunan belge nesnesi.
+
+    Raises:
+        Vazgecildi: Numara boş bırakıldıysa.
     """
     while True:
-        numara = input(soru).strip()
+        numara = input(soru).strip().upper()
+        if not numara:
+            raise Vazgecildi
         try:
             return bul(numara)
         except KayitBulunamadiError as hata:
-            print(hata)
+            hata_yaz(f"{hata} (vazgeçmek için boş Enter)")
 
 
 def bos_olabilir_belge_sor(bul, soru):
     """Belge numarasını sorar; boş Enter ile "yok" denebilir (v1b).
 
     Talepten sipariş / teklif açarken talep bağı isteğe bağlıdır. Numara
-    yazılırsa kayıt bulunana kadar tekrar sorulur (18a).
+    yazılırsa büyük harfe çevrilir ve kayıt bulunana kadar tekrar sorulur
+    (18a).
 
     Args:
         bul: Servisin okuma metodu, ör. servis.talep_bul.
@@ -150,13 +182,13 @@ def bos_olabilir_belge_sor(bul, soru):
         Bulunan belge nesnesi; boş girişte None.
     """
     while True:
-        numara = input(soru).strip()
+        numara = input(soru).strip().upper()
         if not numara:
             return None
         try:
             return bul(numara)
         except KayitBulunamadiError as hata:
-            print(hata)
+            hata_yaz(hata)
 
 
 def nedenli_metin(nedenli_miktarlar):
@@ -222,24 +254,31 @@ def menu_tedarikci_ekle(servis):
             print(f"Tedarikçi eklendi: {tedarikci.tedarikci_kodu}")
             return tedarikci
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
 
 
 def tedarikci_sec(servis):
     """Tedarikçileri listeler, kodu sorar; "Y" ile yeni tedarikçi ekletir (E65).
 
-    Kodun kayıtlı olup olmadığını servis kontrol eder (2a).
+    Kod büyük harfe çevrilir. Kodun kayıtlı olup olmadığını servis kontrol
+    eder (2a). Boş Enter vazgeçmektir (E132).
 
     Args:
         servis: Açık SatinAlmaServisi nesnesi.
 
     Returns:
         Seçilen ya da yeni eklenen tedarikçinin kodu.
+
+    Raises:
+        Vazgecildi: Kod boş bırakıldıysa.
     """
     for tedarikci in servis.tedarikcileri_listele():
         print(f"  {tedarikci.tedarikci_kodu} - {tedarikci.tedarikci_adi}")
-    secim = input("Tedarikçi kodu (yeni tedarikçi için Y): ").strip()
-    if secim.upper() == "Y":
+    secim = input("Tedarikçi kodu (yeni tedarikçi için Y, "
+                  "vazgeçmek için boş Enter): ").strip().upper()
+    if not secim:
+        raise Vazgecildi
+    if secim == "Y":
         return menu_tedarikci_ekle(servis).tedarikci_kodu
     return secim
 
@@ -365,10 +404,10 @@ def menu_siparis_ac(servis):
                   f"· toplam {siparis.genel_toplam()}")
             return
         except KayitBulunamadiError as hata:
-            print(hata)
+            hata_yaz(hata)
             tedarikci_kodu = tedarikci_sec(servis)
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
             print("Kalemleri yeniden girin.")
             kalemler = kalemleri_sor(servis)
 
@@ -438,7 +477,7 @@ def menu_mal_kabul(servis):
                                             tir_kapida=tir_kapida)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
 
     print(f"Mal kabul kaydedildi: {sonuc.mal_kabul.mal_kabul_no}")
     for kalem in sonuc.mal_kabul.mal_kabul_kalemleri:
@@ -496,7 +535,7 @@ def menu_fatura(servis):
                                           tedarikci_fatura_no, kalemler)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
 
     print(f"Fatura kaydedildi: {fatura.fatura_no} · {fatura.durum} "
           f"· toplam {fatura.genel_toplam()}")
@@ -551,7 +590,7 @@ def menu_talep_ac(servis):
             talep = servis.talep_ac(talep_eden, kalemler)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Talep açıldı: {talep.talep_no} · {talep.durum} · "
           f"{len(talep.talep_kalemleri)} kalem")
 
@@ -585,7 +624,7 @@ def menu_talep_reddet(servis):
             servis.talep_reddet(talep.talep_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Talep reddedildi: {talep.talep_no}")
 
 
@@ -612,11 +651,11 @@ def menu_teklif_kaydet(servis):
                                           tedarikci_teklif_no=tedarikci_teklif_no)
             break
         except KayitBulunamadiError as hata:
-            print(hata)
+            hata_yaz(hata)
             tedarikci_kodu = tedarikci_sec(servis)
             kalemler = kalemleri_sor(servis, tavan_sor=False)
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
             print("Kalemleri yeniden girin.")
             kalemler = kalemleri_sor(servis, tavan_sor=False)
     print(f"Teklif kaydedildi: {teklif.teklif_no} · {teklif.durum} "
@@ -639,7 +678,7 @@ def menu_teklif_reddet(servis):
             servis.teklif_reddet(teklif.teklif_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Teklif reddedildi: {teklif.teklif_no}")
 
 
@@ -669,17 +708,31 @@ def odeme_bekleyenleri_yazdir(servis, tedarikci_kodu=None):
     return sayi
 
 
-def odeme_kalemlerini_sor():
+def odeme_kalemlerini_sor(servis):
     """Ödenecek faturaları fatura numarası boş bırakılana kadar sorar.
+
+    Numara büyük harfe çevrilir ve yazıldığı an kontrol edilir: kayıtlı
+    değilse hata gösterilip aynı soru yeniden sorulur, tutar sorulmaz
+    (E132). Faturanın ödenebilir olup olmadığını ve tedarikçisini servis
+    kontrol eder (23c, 23d).
+
+    Args:
+        servis: Açık SatinAlmaServisi nesnesi.
 
     Returns:
         Kalem sözlüklerinin listesi (fatura_no, tutar).
     """
     kalemler = []
     while True:
-        fatura_no = input("Fatura numarası (bitirmek için boş Enter): ").strip()
+        fatura_no = input(
+            "Fatura numarası (bitirmek için boş Enter): ").strip().upper()
         if not fatura_no:
             return kalemler
+        try:
+            servis.fatura_bul(fatura_no)
+        except KayitBulunamadiError as hata:
+            hata_yaz(hata)
+            continue
         kalemler.append({
             "fatura_no": fatura_no,
             "tutar": tutar_sor("  Ödenen tutar: "),
@@ -703,7 +756,7 @@ def menu_odeme_kaydet(servis):
         if odeme_bekleyenleri_yazdir(servis, tedarikci_kodu) == 0:
             print("Bu tedarikçinin ödeme bekleyen faturası yok.")
             return
-        kalemler = odeme_kalemlerini_sor()
+        kalemler = odeme_kalemlerini_sor(servis)
         yontemler = {}
         for yontem in ODEME_YONTEMLERI:
             yontemler[yontem] = yontem
@@ -716,10 +769,10 @@ def menu_odeme_kaydet(servis):
                                         odeme_notu=odeme_notu)
             break
         except KayitBulunamadiError as hata:
-            print(hata)
+            hata_yaz(hata)
             tedarikci_kodu = tedarikci_sec(servis)
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Ödeme kaydedildi: {odeme.odeme_no} · {odeme.odeme_yontemi} "
           f"· toplam {odeme.toplam()}")
     for kalem in odeme.odeme_kalemleri:
@@ -774,7 +827,7 @@ def menu_serbest_birak(servis):
             servis.serbest_birak(fatura.fatura_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
 
     print(f"Fatura serbest bırakıldı: {fatura.fatura_no}")
 
@@ -799,7 +852,7 @@ def menu_reddet(servis):
             servis.reddet(fatura.fatura_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
 
     print(f"Fatura reddedildi: {fatura.fatura_no}")
 
@@ -832,7 +885,7 @@ def menu_karantina_karari(servis):
                                                 karar, miktar, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
 
     print(f"Karar kaydedildi: {kayit.mal_kabul_no} kalem "
           f"{kayit.mal_kabul_kalem_no} · {kayit.karar} {kayit.miktar}")
@@ -859,7 +912,7 @@ def menu_odeme_iptal(servis):
             servis.odeme_iptal_et(odeme.odeme_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Ödeme iptal edildi: {odeme.odeme_no}")
 
 
@@ -879,7 +932,7 @@ def menu_fatura_iptal(servis):
             servis.fatura_iptal_et(fatura.fatura_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Fatura iptal edildi: {fatura.fatura_no}")
 
 
@@ -899,7 +952,7 @@ def menu_mal_kabul_iptal(servis):
             servis.mal_kabul_iptal_et(mal_kabul.mal_kabul_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Mal kabul iptal edildi: {mal_kabul.mal_kabul_no}")
 
 
@@ -919,7 +972,7 @@ def menu_siparis_iptal(servis):
             servis.siparis_iptal_et(siparis.siparis_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Sipariş iptal edildi: {siparis.siparis_no}")
 
 
@@ -939,7 +992,7 @@ def menu_teklif_iptal(servis):
             servis.teklif_iptal_et(teklif.teklif_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Teklif iptal edildi: {teklif.teklif_no}")
 
 
@@ -959,7 +1012,7 @@ def menu_talep_iptal(servis):
             servis.talep_iptal_et(talep.talep_no, gerekce, notu)
             break
         except GecersizGirisError as hata:
-            print(hata)
+            hata_yaz(hata)
     print(f"Talep iptal edildi: {talep.talep_no}")
 
 
@@ -1060,14 +1113,16 @@ def menuyu_baslat():
     Açılışta veri dosyası okunamazsa (DepolamaError, 10a, 10c) mesaj verip
     durur. Menü fonksiyonlarının yakalamadığı bütün hatalar (ör. sipariş
     zaten onaylı) tek except SatinAlmaError ile yakalanır; mesaj gösterilir
-    ve menüye dönülür (E99). Genel except Exception yok. Seçenekler
-    akış sırasıyla gruplanır (talep → ödeme → listeler → iptaller); numarası
-    None olan satır grup başlığıdır, seçilemez.
+    ve menüye dönülür (E99). Kullanıcı bir numara sorusunu boş geçerse
+    Vazgecildi burada yakalanır ve menüye dönülür (E132). Genel except
+    Exception yok. Seçenekler akış sırasıyla gruplanır (talep → ödeme →
+    listeler → iptaller); numarası None olan satır grup başlığıdır,
+    seçilemez.
     """
     try:
         servis = SatinAlmaServisi(VERI_DOSYASI)
     except DepolamaError as hata:
-        print(hata)
+        hata_yaz(hata)
         return
 
     while True:
@@ -1089,13 +1144,15 @@ def menuyu_baslat():
             if numara == secim:
                 secilen = menu_fonksiyonu
         if secilen is None:
-            print("Geçersiz seçim.")
+            hata_yaz("Geçersiz seçim.")
             continue
 
         try:
             secilen(servis)
         except SatinAlmaError as hata:
-            print(hata)
+            hata_yaz(hata)
+        except Vazgecildi:
+            print("Ana menüye dönülüyor.")
 
 
 if __name__ == "__main__":

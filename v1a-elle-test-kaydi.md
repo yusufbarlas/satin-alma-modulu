@@ -1,7 +1,8 @@
-# Satın Alma Modülü — menüden elle test kaydı
+# Satın Alma Modülü — v1a menüden elle test kaydı
 
 Tarih: 22 Kasım 2026 · `python ana.py`, ayarlar.py'deki gerçek toleranslarla (SARF: fazla %10, aşırı %25, fiyat üst %5).
 Veri dosyası yokken başlandı (ilk açılış). `◀` işaretli satırlar klavyeden girilen cevaptır.
+v1a menü numaralarıyla; v1b'nin kaydı (26 seçenekli menü): `v1b-elle-test-kaydi.md`.
 
 ## Oturum 1 — M1-M10
 

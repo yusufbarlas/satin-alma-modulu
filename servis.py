@@ -97,6 +97,19 @@ class KarantinaSatiri:
         return toplam
 
 
+# _kayit_bul'un hata mesajında kullanılan belge türü adları (E132):
+# (servisteki sözlüğün adı, ekranda görünen tür).
+BELGE_TURLERI = (
+    ("tedarikciler", "Tedarikçi"),
+    ("talepler", "Talep"),
+    ("teklifler", "Teklif"),
+    ("siparisler", "Sipariş"),
+    ("mal_kabuller", "Mal kabul"),
+    ("faturalar", "Fatura"),
+    ("odemeler", "Ödeme"),
+)
+
+
 class SatinAlmaServisi:
     """Satın alma sürecinin bütün işlemleri: talep, teklif, sipariş, mal
     kabul, fatura, ödeme.
@@ -212,8 +225,11 @@ class SatinAlmaServisi:
     def _kayit_bul(self, kayitlar, numara, kod):
         """Numarası verilen belgeyi verilen sözlükte bulur.
 
-        Dört belge türü için tek yardımcı: hangi sözlükte aranacağını
-        çağıran söyler (ör. self.siparisler).
+        Bütün belge türleri için tek yardımcı: hangi sözlükte aranacağını
+        çağıran söyler (ör. self.siparisler). Bulunamazsa mesaj kaydın
+        türünü söyler ("Fatura bulunamadı: FTR-0009"); numara boşsa
+        "Fatura numarası girilmedi" der (E132). Tür, sözlüğün kendisinden
+        çıkarılır; çağıranların değişmesi gerekmez.
 
         Args:
             kayitlar: Numarayla anahtarlı belge sözlüğü.
@@ -229,10 +245,15 @@ class SatinAlmaServisi:
                 verdiği).
         """
         if numara not in kayitlar:
-            raise KayitBulunamadiError(
-                f"{numara} numaralı kayıt bulunamadı",
-                kod=kod,
-            )
+            belge_turu = "Kayıt"
+            for alan_adi, tur_adi in BELGE_TURLERI:
+                if getattr(self, alan_adi) is kayitlar:
+                    belge_turu = tur_adi
+            if not str(numara).strip():
+                mesaj = f"{belge_turu} numarası girilmedi"
+            else:
+                mesaj = f"{belge_turu} bulunamadı: {numara}"
+            raise KayitBulunamadiError(mesaj, kod=kod)
         return kayitlar[numara]
 
     

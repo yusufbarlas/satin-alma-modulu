@@ -150,7 +150,7 @@ def test_menu_hata_yollari(tmp_path, monkeypatch, capsys):
     cikti, servis = menuyu_calistir(tmp_path, monkeypatch, capsys, girdiler)
     assert "Talep eden boş olamaz" in cikti
     assert "sadece iptal edilmemiş ONAYLANDI talebe bağlanılır" in cikti
-    assert "TLP-9999 numaralı kayıt bulunamadı" in cikti
+    assert "Hata: Talep bulunamadı: TLP-9999" in cikti
     assert "talep miktarından (10) büyük olamaz" in cikti
     assert "talep kalemi zaten SAS-0001 siparişine bağlı" in cikti
     assert "talebe bağlı aktif sipariş var (SAS-0001)" in cikti
@@ -218,7 +218,7 @@ def test_menu_teklif_iptal_ve_talep_iptal_ve_hatalar(tmp_path, monkeypatch, caps
         + ["26", "TLP-0001", "3", ""]
         + ["0"])
     cikti, servis = menuyu_calistir(tmp_path, monkeypatch, capsys, girdiler)
-    assert "TED-9 numaralı kayıt bulunamadı" in cikti
+    assert "Hata: Tedarikçi bulunamadı: TED-9" in cikti
     assert "Teklif kaydedildi: TKL-0001" in cikti
     assert "Teklif kaydedildi: TKL-0002 · ACIK · toplam 3.00" in cikti
     assert "teklife bağlı aktif sipariş var" in cikti
@@ -259,3 +259,64 @@ def test_menu_v1a_akisi_bozulmadi(tmp_path, monkeypatch, capsys):
     assert "Fatura serbest bırakıldı: FTR-0001" in cikti
     assert "Karar kaydedildi: MKB-0001 kalem 10" in cikti
     assert servis.fatura_bul("FTR-0001").durum == "SERBEST"
+
+
+# Talepsiz sipariş → onay → tam mal kabul → fatura (FTR-0001, 1000, ONAYLANDI)
+FATURALI_SIPARIS = (
+    ["7", "TED-0001", "", "A4", "10", "adet", "100", "SARF", "", "", ""]
+    + ["9", "SAS-0001"]
+    + ["10", "SAS-0001", "", "10", ""]
+    + ["11", "SAS-0001", "F-1001", "10", "100", ""]
+)
+
+
+def test_menu_bos_enter_ile_vazgecilir(tmp_path, monkeypatch, capsys):
+    """E132 bulgu 1: numara sorusunda boş Enter ana menüye döndürür, hiçbir şey kaydedilmez."""
+    girdiler = (TED
+        # 22 fatura iptal: fatura yok, boş Enter → ana menü
+        + ["22", ""]
+        # 7 sipariş: tedarikçi sorusunda boş Enter → ana menü
+        + ["7", ""]
+        # 9 sipariş onayla: önce olmayan numara, sonra boş Enter
+        + ["9", "SAS-0099", ""]
+        + ["0"])
+    cikti, servis = menuyu_calistir(tmp_path, monkeypatch, capsys, girdiler)
+    assert cikti.count("Ana menüye dönülüyor.") == 3
+    assert "Hata: Sipariş bulunamadı: SAS-0099 (vazgeçmek için boş Enter)" in cikti
+    assert servis.sayaclar["SAS"] == 0
+
+
+def test_menu_belge_numarasi_kucuk_harfle(tmp_path, monkeypatch, capsys):
+    """E132 bulgu 4: belge ve tedarikçi numarası küçük harfle de bulunur."""
+    girdiler = (TED + TALEP
+        + ["2", "tlp-0001"]
+        + ["7", "ted-0001", "tlp-0001", "10", "12", "", ""]
+        + ["0"])
+    cikti, servis = menuyu_calistir(tmp_path, monkeypatch, capsys, girdiler)
+    assert "Talep onaylandı: TLP-0001" in cikti
+    assert "Sipariş açıldı: SAS-0001" in cikti
+    assert servis.siparis_bul("SAS-0001").tedarikci_kodu == "TED-0001"
+
+
+def test_menu_hata_oneki_ve_tutar_bicimi(tmp_path, monkeypatch, capsys):
+    """E132 bulgu 2 ve 5: hata satırı "Hata: " ile başlar; tutar hatası doğru biçimi gösterir."""
+    girdiler = (["99"]
+        # 1 talep: miktar "120.00" geçersiz, sonra "10"
+        + ["1", "Muhasebe", "Defter", "120.00", "10", "adet", "SARF", "", ""]
+        + ["0"])
+    cikti, servis = menuyu_calistir(tmp_path, monkeypatch, capsys, girdiler)
+    assert "Hata: Geçersiz seçim." in cikti
+    assert "Hata: Geçersiz tutar: 120.00 (örnek: 120,50 ya da 1.250,50)" in cikti
+    assert "Talep açıldı: TLP-0001" in cikti
+
+
+def test_menu_odemede_fatura_numarasi_aninda_kontrol(tmp_path, monkeypatch, capsys):
+    """E132 bulgu 6: olmayan fatura numarası yazıldığı an reddedilir, tutar sorulmaz; ödeme kaydedilir."""
+    girdiler = (TED + FATURALI_SIPARIS
+        # 16 ödeme: "12" yok → hemen hata, aynı soru; küçük harfle doğru fatura
+        + ["16", "TED-0001", "12", "ftr-0001", "400", "", "1", ""]
+        + ["0"])
+    cikti, servis = menuyu_calistir(tmp_path, monkeypatch, capsys, girdiler)
+    assert "Hata: Fatura bulunamadı: 12" in cikti
+    assert "Ödeme kaydedildi: ODM-0001 · HAVALE_EFT · toplam 400" in cikti
+    assert servis.fatura_kalan_borc("FTR-0001") == Decimal("600")
