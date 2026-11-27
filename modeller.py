@@ -15,6 +15,14 @@ FATURA_DURUM_GECISLERI = {
     "REDDEDILDI": [],
 }
 
+TALEP_DURUM_GECISLERI = {
+    "TASLAK": ["ONAYLANDI", "REDDEDILDI"],
+    "ONAYLANDI": [],
+    "REDDEDILDI": [],
+}
+
+TEKLIF_DURUM_GECISLERI = {"ACIK": ["REDDEDILDI"], "REDDEDILDI": []}
+
 
 @dataclass
 class Tedarikci:
@@ -68,7 +76,8 @@ class IptalBilgisi:
         """
         if self.iptal_edildi:
             raise IslemYapilamazError(
-                "Belge zaten iptal edilmiş; iptal geri alınamaz"
+                "Belge zaten iptal edilmiş; iptal geri alınamaz",
+                kod="26a",
             )
         self.iptal_edildi = True
         self.iptal_gerekcesi = gerekce
@@ -124,6 +133,10 @@ class SiparisKalemi:
         iskonto_turu: "ORAN" (yüzde) ya da "TUTAR" (adet başına TL).
         iskonto_degeri: İskonto değeri; varsayılan 0.
         miktar_tavani: Fazla teslimat toleransına adet tavanı; None = yok (E48).
+        talep_no: Bağlı talep, ör. "TLP-0001"; talepsiz siparişte None (E120).
+        talep_kalem_no: Bağlı talep kalemi, ör. 10; talep_no ile birlikte.
+        teklif_no: Bağlı teklif, ör. "TKL-0001"; teklifsiz siparişte None.
+        teklif_kalem_no: Bağlı teklif kalemi, ör. 10; teklif_no ile birlikte.
     """
 
     kalem_no: int
@@ -136,6 +149,10 @@ class SiparisKalemi:
     iskonto_turu: str = "ORAN"
     iskonto_degeri: Decimal = Decimal("0")
     miktar_tavani: Decimal | None = None
+    talep_no: str | None = None
+    talep_kalem_no: int | None = None
+    teklif_no: str | None = None
+    teklif_kalem_no: int | None = None
 
     def tutar(self):
         """Kalem tutarı: miktar × net birim fiyat; tek kez yuvarlanır (E35).
@@ -195,7 +212,8 @@ class Siparis:
         izinli_durumlar = SIPARIS_DURUM_GECISLERI[self.durum]
         if yeni_durum not in izinli_durumlar:
             raise IslemYapilamazError(
-                f"{self.siparis_no}: {self.durum} → {yeni_durum} geçişine izin yok"
+                f"{self.siparis_no}: {self.durum} → {yeni_durum} geçişine izin yok",
+                kod="26b",
             )
         self.durum = yeni_durum
 
@@ -367,20 +385,23 @@ class FaturaKalemi:
         """
         if not dagitimlar:
             raise GecersizGirisError(
-                f"Kalem {self.kalem_no}: mal kabul dağıtımı boş olamaz"
+                f"Kalem {self.kalem_no}: mal kabul dağıtımı boş olamaz",
+                kod="6c",
             )
         toplam = Decimal("0")
         for dagitim in dagitimlar:
             if dagitim.miktar <= 0:
                 raise GecersizGirisError(
                     f"Kalem {self.kalem_no}: {dagitim.mal_kabul_no} dağıtım "
-                    f"miktarı 0'dan büyük olmalı ({dagitim.miktar})"
+                    f"miktarı 0'dan büyük olmalı ({dagitim.miktar})",
+                    kod="6c",
                 )
             toplam += dagitim.miktar
         if toplam != self.miktar:
             raise GecersizGirisError(
                 f"Kalem {self.kalem_no}: dağıtım toplamı {toplam}, "
-                f"fatura kalemi miktarı {self.miktar}; eşit olmalı"
+                f"fatura kalemi miktarı {self.miktar}; eşit olmalı",
+                kod="6c",
             )
         self.mal_kabul_dagitimi = dagitimlar
 
@@ -442,9 +463,249 @@ class Fatura:
         izinli_durumlar = FATURA_DURUM_GECISLERI[self.durum]
         if yeni_durum not in izinli_durumlar:
             raise IslemYapilamazError(
-                f"{self.fatura_no}: {self.durum} → {yeni_durum} geçişine izin yok"
+                f"{self.fatura_no}: {self.durum} → {yeni_durum} geçişine izin yok",
+                kod="26b",
             )
         self.durum = yeni_durum
+
+@dataclass
+class TalepKalemi:
+    """Talebin bir satırı: ne, ne kadar isteniyor (E121).
+
+    Fiyat zorunlu değildir; tahmini fiyat bilgi içindir (SAP değerleme
+    fiyatı; v3'te bütçe kontrolü).
+
+    Attributes:
+        kalem_no: Talep içindeki numara: 10, 20, 30 (KALEM_NO_ARTISI).
+        malzeme_adi: Ürün adı, ör. "Defter".
+        miktar: İstenen miktar (> 0), ör. Decimal("10").
+        birim: "adet", "kg" ya da "metre".
+        kategori: "SARF" ya da "STRATEJIK".
+        tahmini_birim_fiyat: Tahmini birim fiyat; verilmezse None.
+    """
+
+    kalem_no: int
+    malzeme_adi: str
+    miktar: Decimal
+    birim: str
+    kategori: str
+    tahmini_birim_fiyat: Decimal | None = None
+
+
+@dataclass
+class Talep:
+    """Satın alma talebi (purchase requisition): "şu malzeme lazım" isteği.
+
+    Durum TASLAK ile başlar; onaylanırsa ONAYLANDI, reddedilirse
+    REDDEDILDI olur ve kilitlenir (T3). Durumu sadece durum_degistir
+    değiştirir. İptal durum değil, iptal_bilgisi'dir (E121).
+
+    Attributes:
+        talep_no: Sistemin verdiği numara, ör. "TLP-0001".
+        talep_eden: Talebi yapan kişi ya da birim (serbest metin, zorunlu;
+            v3'te kullanıcı).
+        talep_kalemleri: TalepKalemi listesi; en az 1 kalem.
+        kayit_tarihi: Kayıt tarihi, ör. "2026-11-02" (E53).
+        durum: "TASLAK", "ONAYLANDI" ya da "REDDEDILDI".
+        iptal_bilgisi: Boş kurulan iptal kartı (IptalBilgisi).
+        karar_gerekcesi: Red gerekçesi (KARAR_GEREKCELERI["TALEP_RED"]);
+            onay gerekçesizdir (T2).
+        karar_notu: Karar açıklaması; DIGER seçildiyse zorunlu (servis kontrol eder).
+        karar_tarihi: Onay / red günü; karar verilene kadar None (E113).
+    """
+
+    talep_no: str
+    talep_eden: str
+    talep_kalemleri: list[TalepKalemi]
+    kayit_tarihi: str
+    durum: str = "TASLAK"
+    iptal_bilgisi: IptalBilgisi = field(default_factory=IptalBilgisi)
+    karar_gerekcesi: str | None = None
+    karar_notu: str | None = None
+    karar_tarihi: str | None = None
+
+    def durum_degistir(self, yeni_durum):
+        """Durumu TALEP_DURUM_GECISLERI'ndeki izinli geçişe göre değiştirir.
+
+        Args:
+            yeni_durum: Hedef durum, ör. "ONAYLANDI".
+
+        Raises:
+            IslemYapilamazError: Geçişe izin yoksa (ör. ONAYLANDI → REDDEDILDI;
+                26b, servis önce 18b verir).
+        """
+        izinli_durumlar = TALEP_DURUM_GECISLERI[self.durum]
+        if yeni_durum not in izinli_durumlar:
+            raise IslemYapilamazError(
+                f"{self.talep_no}: {self.durum} → {yeni_durum} geçişine izin yok",
+                kod="26b",
+            )
+        self.durum = yeni_durum
+
+
+@dataclass
+class TeklifKalemi:
+    """Teklifin bir satırı: tedarikçinin bir malzeme için verdiği fiyat (E122).
+
+    Alanlar sipariş kalemiyle aynıdır, tolerans yoktur (K4: toleransa
+    siparişe geçerken kategoriden bakılır). Talebe bağlıysa malzeme,
+    birim ve kategori talepten gelir (B6).
+
+    Attributes:
+        kalem_no: Teklif içindeki numara: 10, 20, 30.
+        malzeme_adi: Ürün adı, ör. "Defter".
+        miktar: Teklif edilen miktar (> 0).
+        birim: "adet", "kg" ya da "metre".
+        kategori: "SARF" ya da "STRATEJIK".
+        birim_fiyat: İskonto öncesi birim fiyat, ör. Decimal("12.50").
+        iskonto_turu: "ORAN" (yüzde) ya da "TUTAR" (adet başına TL).
+        iskonto_degeri: İskonto değeri; varsayılan 0.
+        talep_no: Bağlı talep, ör. "TLP-0001"; talepsiz teklifte None (K5).
+        talep_kalem_no: Bağlı talep kalemi, ör. 10; talep_no ile birlikte.
+    """
+
+    kalem_no: int
+    malzeme_adi: str
+    miktar: Decimal
+    birim: str
+    kategori: str
+    birim_fiyat: Decimal
+    iskonto_turu: str = "ORAN"
+    iskonto_degeri: Decimal = Decimal("0")
+    talep_no: str | None = None
+    talep_kalem_no: int | None = None
+
+    def tutar(self):
+        """Kalem tutarı: miktar × net birim fiyat; tek kez yuvarlanır (E35).
+
+        Returns:
+            Kalem tutarı (Decimal, 2 hane).
+        """
+        net_fiyat = net_fiyat_hesapla(
+            self.birim_fiyat, self.iskonto_turu, self.iskonto_degeri
+        )
+        return tutar_yuvarla(net_fiyat * self.miktar)
+
+
+@dataclass
+class Teklif:
+    """Tedarikçi teklifi (quotation): bir tedarikçinin fiyat ve şart önerisi.
+
+    Durum ACIK ile başlar; reddedilirse REDDEDILDI olur. "Siparişe dönüştü"
+    saklanmaz, servis hesaplar (R4). İptal durum değil, iptal_bilgisi'dir
+    (E122).
+
+    Attributes:
+        teklif_no: Sistemin verdiği numara, ör. "TKL-0001".
+        tedarikci_kodu: Teklifi veren tedarikçi, ör. "TED-0001".
+        teklif_kalemleri: TeklifKalemi listesi; en az 1 kalem.
+        kayit_tarihi: Kayıt tarihi, ör. "2026-11-02" (E53).
+        durum: "ACIK" ya da "REDDEDILDI".
+        tedarikci_teklif_no: Tedarikçinin kendi teklif numarası; isteğe bağlı.
+        iptal_bilgisi: Boş kurulan iptal kartı (IptalBilgisi).
+        karar_gerekcesi: Red gerekçesi (KARAR_GEREKCELERI["TEKLIF_RED"]).
+        karar_notu: Karar açıklaması; DIGER seçildiyse zorunlu (servis kontrol eder).
+        karar_tarihi: Red günü; karar verilene kadar None (E113).
+    """
+
+    teklif_no: str
+    tedarikci_kodu: str
+    teklif_kalemleri: list[TeklifKalemi]
+    kayit_tarihi: str
+    durum: str = "ACIK"
+    tedarikci_teklif_no: str | None = None
+    iptal_bilgisi: IptalBilgisi = field(default_factory=IptalBilgisi)
+    karar_gerekcesi: str | None = None
+    karar_notu: str | None = None
+    karar_tarihi: str | None = None
+
+    def genel_toplam(self):
+        """Bütün kalem tutarlarının toplamı.
+
+        Returns:
+            Teklif toplamı (Decimal).
+        """
+        toplam = Decimal("0")
+        for kalem in self.teklif_kalemleri:
+            toplam += kalem.tutar()
+        return toplam
+
+    def durum_degistir(self, yeni_durum):
+        """Durumu TEKLIF_DURUM_GECISLERI'ndeki izinli geçişe göre değiştirir.
+
+        Args:
+            yeni_durum: Hedef durum, ör. "REDDEDILDI".
+
+        Raises:
+            IslemYapilamazError: Geçişe izin yoksa (ör. REDDEDILDI → ACIK;
+                26b, servis önce 21b verir).
+        """
+        izinli_durumlar = TEKLIF_DURUM_GECISLERI[self.durum]
+        if yeni_durum not in izinli_durumlar:
+            raise IslemYapilamazError(
+                f"{self.teklif_no}: {self.durum} → {yeni_durum} geçişine izin yok",
+                kod="26b",
+            )
+        self.durum = yeni_durum
+
+
+@dataclass
+class OdemeKalemi:
+    """Ödemenin bir satırı: hangi faturaya ne kadar ödendi (E123).
+
+    Bağ kalemdedir (E120); tek ödeme aynı tedarikçinin birden çok
+    faturasını kapatabilir (O2).
+
+    Attributes:
+        kalem_no: Ödeme içindeki numara: 10, 20, 30.
+        fatura_no: Ödenen fatura, ör. "FTR-0001".
+        tutar: Bu faturaya ödenen tutar (> 0, kalan borcu aşamaz; O3),
+            ör. Decimal("600").
+    """
+
+    kalem_no: int
+    fatura_no: str
+    tutar: Decimal
+
+
+@dataclass
+class Odeme:
+    """Giden ödeme (outgoing payment): tedarikçiye yapılan ödeme (E123).
+
+    Durum alanı yoktur; yanlış ödeme iptal_bilgisi ile ters kayda alınır
+    (SAP reversal). Faturanın kalan borcu saklanmaz, servis hesaplar (R4).
+
+    Attributes:
+        odeme_no: Sistemin verdiği numara, ör. "ODM-0001".
+        tedarikci_kodu: Ödenen tedarikçi, ör. "TED-0001".
+        odeme_yontemi: ODEME_YONTEMLERI'nden biri: "HAVALE_EFT" ya da "NAKIT".
+        odeme_kalemleri: OdemeKalemi listesi; en az 1 kalem.
+        kayit_tarihi: Ödeme günü, ör. "2026-11-02" (E53).
+        odeme_notu: Açıklama; isteğe bağlı.
+        iptal_bilgisi: Boş kurulan iptal kartı (IptalBilgisi).
+    """
+
+    odeme_no: str
+    tedarikci_kodu: str
+    odeme_yontemi: str
+    odeme_kalemleri: list[OdemeKalemi]
+    kayit_tarihi: str
+    odeme_notu: str | None = None
+    iptal_bilgisi: IptalBilgisi = field(default_factory=IptalBilgisi)
+
+    def toplam(self):
+        """Bütün ödeme kalemlerinin toplamı.
+
+        OdemeKalemi'nde tutar bir alandır (parantezsiz), sipariş ve fatura
+        kalemlerindeki gibi metot değildir.
+
+        Returns:
+            Ödeme toplamı (Decimal), ör. 600 + 400 → Decimal("1000").
+        """
+        toplam = Decimal("0")
+        for kalem in self.odeme_kalemleri:
+            toplam += kalem.tutar
+        return toplam
 
 
 if __name__ == "__main__":
@@ -535,4 +796,37 @@ if __name__ == "__main__":
         10, 10, Decimal("8"), kapida_redler=[NedenliMiktar("YANLIS_URUN", Decimal("2"))]
     )
     print(c9_kalemi.karantina_miktari(), c9_kalemi.kapida_red_miktari())  # 0 2
-        
+
+    
+    print("--- Talep ---")
+    talep = Talep(
+        "TLP-0001", "Muhasebe",
+        [TalepKalemi(10, "Defter", Decimal("10"), "adet", "SARF")],
+        "2026-11-02",
+    )
+    talep.durum_degistir("ONAYLANDI")
+    print(talep.durum)  # ONAYLANDI
+    try:
+        talep.durum_degistir("REDDEDILDI")
+    except IslemYapilamazError as hata:
+        print(hata, hata.kod)  # TLP-0001: ONAYLANDI → REDDEDILDI geçişine izin yok 26b
+
+    print("--- Teklif ---")
+    teklif_kalemi = TeklifKalemi(
+        10, "Defter", Decimal("10"), "adet", "SARF", Decimal("12.50"),
+        "ORAN", Decimal("10"), talep_no="TLP-0001", talep_kalem_no=10,
+    )
+    teklif = Teklif("TKL-0001", "TED-0001", [teklif_kalemi], "2026-11-02")
+    print(teklif_kalemi.tutar(), teklif.genel_toplam(), teklif.durum)  # 112.50 112.50 ACIK
+    teklif.durum_degistir("REDDEDILDI")
+    print(teklif.durum)  # REDDEDILDI
+
+    print("--- Ödeme ---")
+    odeme = Odeme(
+        "ODM-0001", "TED-0001", "HAVALE_EFT",
+        [OdemeKalemi(10, "FTR-0001", Decimal("600")),
+         OdemeKalemi(20, "FTR-0002", Decimal("400"))],
+        "2026-11-02",
+    )
+    print(odeme.toplam())  # 1000
+    print(kalem1.talep_no, kalem1.teklif_no)  # None None (talepsiz sipariş)

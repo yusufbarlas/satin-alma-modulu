@@ -3,4 +3,5 @@ __pycache__/
 .pytest_cache/
 veri.json
 test_veri.json
-Claude outputs/
+notlar/
+*.tmp

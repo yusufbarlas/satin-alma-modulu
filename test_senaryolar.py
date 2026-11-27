@@ -2,8 +2,9 @@
 
 Her test kendi geçici klasöründe (tmp_path) temiz veriyle çalışır;
 sonuç assert ile, beklenen hatalar pytest.raises ile kontrol edilir
-(E119). Senaryolar harf sırasıyla dizilir (A … G); senaryo tablosu:
-D · Karar kayıtları → madde 8. Çalıştırma: proje klasöründe `pytest -v`.
+(E119). Senaryolar harf sırasıyla dizilir: v1a A … G, v1b H … M ve
+denetim bulguları (B5, B6, B8, B10); senaryo tablosu: D · Karar
+kayıtları → madde 8. Çalıştırma: proje klasöründe `pytest -v`.
 """
 
 import json
@@ -12,7 +13,12 @@ from decimal import Decimal
 import pytest
 
 from depolama import bos_veri_olustur, kaydet
-from hatalar import DepolamaError, GecersizGirisError, IslemYapilamazError
+from hatalar import (
+    DepolamaError,
+    GecersizGirisError,
+    IslemYapilamazError,
+    KayitBulunamadiError,
+)
 from modeller import NedenliMiktar, ToleransKopyasi
 from servis import SatinAlmaServisi
 
@@ -1283,7 +1289,7 @@ def test_f2(tmp_path):
 
 
 def test_f3(tmp_path):
-    """F3 — veri sürümü: kaydedilen dosyada "veri_surumu": 1 yazar (R5).
+    """F3 — veri sürümü: kaydedilen dosyada "veri_surumu": 2 yazar (R5, E131).
 
     Ortak test verisi kurulur (her işlem dosyaya kaydedilir), sonra
     dosya doğrudan JSON olarak okunur.
@@ -1291,7 +1297,7 @@ def test_f3(tmp_path):
     veri_dosyasi = tmp_path / "veri.json"
     baslangic_verisini_kur(veri_dosyasi)
     ham_veri = json.loads(veri_dosyasi.read_text(encoding="utf-8"))
-    assert ham_veri["veri_surumu"] == 1
+    assert ham_veri["veri_surumu"] == 2
 
 
 def test_f4(tmp_path):
@@ -1299,7 +1305,7 @@ def test_f4(tmp_path):
 
     Dosya yokken servis hata vermeden açılır ve dosya oluşturmaz; bütün
     listeler boş, ilk tedarikçi TED-0001 alır. İlk kayıttan sonra dosya
-    oluşur ve içinde "veri_surumu": 1 yazar (4.5, E6, R5).
+    oluşur ve içinde "veri_surumu": 2 yazar (4.5, E6, R5, E131).
     """
     veri_dosyasi = tmp_path / "veri.json"
     servis = SatinAlmaServisi(veri_dosyasi)
@@ -1313,7 +1319,7 @@ def test_f4(tmp_path):
     assert eklenen_tedarikci.tedarikci_kodu == "TED-0001"
     assert veri_dosyasi.exists()
     ham_veri = json.loads(veri_dosyasi.read_text(encoding="utf-8"))
-    assert ham_veri["veri_surumu"] == 1
+    assert ham_veri["veri_surumu"] == 2
 
 
 def test_g1(tmp_path):
@@ -1408,3 +1414,719 @@ def test_g3(tmp_path):
     assert ayrinti.kalem_sonuclari[1].bulgular == []
     assert kaydedilen_fatura.durum == "BLOKE"
     assert kaydedilen_fatura.bloke_neden_kodlari == ["FIYAT_YUKSEK"]
+
+
+# ---------------------------------------------------------------------------
+# v1b senaryoları (H-M; D madde 8 → "v1b senaryoları", E125)
+# ---------------------------------------------------------------------------
+
+def onayli_talep_kur(servis, test_tarihi):
+    """İki kalemli talebi (TLP-0001) açar, onaylar ve döndürür.
+
+    Kalem 10: 10 adet Defter (SARF, tahmini 12); kalem 20: 2 adet Toner
+    (SARF, tahmini fiyat yok).
+    """
+    talep = servis.talep_ac("Muhasebe", [
+        {"malzeme_adi": "Defter", "miktar": Decimal("10"), "birim": "adet",
+         "kategori": "SARF", "tahmini_birim_fiyat": Decimal("12")},
+        {"malzeme_adi": "Toner", "miktar": Decimal("2"), "birim": "adet",
+         "kategori": "SARF"},
+    ], tarih=test_tarihi)
+    servis.talep_onayla(talep.talep_no, tarih=test_tarihi)
+    return talep
+
+
+def sas1_faturasi_kur(servis, test_tarihi, k10_fiyati=Decimal("100")):
+    """SAS-0001'e tam mal kabul ve fatura (A1 kalıbı) kaydeder, faturayı döndürür.
+
+    k10_fiyati 100 ise fatura ONAYLANDI ve toplam 2000; 103 ise BLOKE (A2).
+    """
+    servis.mal_kabul_kaydet("SAS-0001", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+        {"siparis_kalem_no": 20, "gelen_miktar": Decimal("4")},
+    ], tarih=test_tarihi)
+    return servis.fatura_kaydet("SAS-0001", "F-1001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": k10_fiyati},
+        {"siparis_kalem_no": 20, "miktar": Decimal("4"),
+         "birim_fiyat": Decimal("250")},
+    ], tarih=test_tarihi)
+
+
+def test_h1(tmp_path):
+    """H1 — talep aç ve onayla: TLP-0001 ONAYLANDI (E121)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+
+    acilan_talep = onayli_talep_kur(servis, test_tarihi)
+
+    assert acilan_talep.talep_no == "TLP-0001"
+    assert acilan_talep.durum == "ONAYLANDI"
+    assert acilan_talep.karar_tarihi == test_tarihi
+    assert acilan_talep.talep_kalemleri[0].kalem_no == 10
+    assert acilan_talep.talep_kalemleri[1].tahmini_birim_fiyat is None
+
+
+def test_h2(tmp_path):
+    """H2 — reddedilen talepten teklif açılmaz (19b, E121, K2)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    acilan_talep = servis.talep_ac("Muhasebe", [
+        {"malzeme_adi": "Defter", "miktar": Decimal("10"), "birim": "adet",
+         "kategori": "SARF"},
+    ], tarih=test_tarihi)
+    servis.talep_reddet(acilan_talep.talep_no, "BUTCE_YOK", tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.teklif_kaydet("TED-0001", [
+            {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+             "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "19b"
+    assert acilan_talep.durum == "REDDEDILDI"
+    assert acilan_talep.karar_gerekcesi == "BUTCE_YOK"
+
+
+def test_h3(tmp_path):
+    """H3 — talep_eden boş: 17a; sayaç artmaz."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.talep_ac("  ", [
+            {"malzeme_adi": "Defter", "miktar": Decimal("10"), "birim": "adet",
+             "kategori": "SARF"},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "17a"
+    assert servis.talepler == {}
+
+
+def test_h4(tmp_path):
+    """H4 — onaylı talep yeniden onaylanmaz (18b, T3)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.talep_onayla("TLP-0001", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "18b"
+
+
+def test_i1(tmp_path):
+    """I1 — onaylı talep için iki tedarikçiden teklif: ikisi de ACIK (T4).
+
+    Bağlı kalemde malzeme, birim ve kategori talepten kopyalanır (B6).
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+
+    abc_teklifi = servis.teklif_kaydet("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tedarikci_teklif_no="ABC-T1", tarih=test_tarihi)
+    xyz_teklifi = servis.teklif_kaydet("TED-0002", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("11")},
+    ], tarih=test_tarihi)
+
+    assert abc_teklifi.teklif_no == "TKL-0001"
+    assert xyz_teklifi.teklif_no == "TKL-0002"
+    assert abc_teklifi.durum == "ACIK"
+    assert xyz_teklifi.durum == "ACIK"
+    assert abc_teklifi.teklif_kalemleri[0].malzeme_adi == "Defter"
+    assert abc_teklifi.teklif_kalemleri[0].kategori == "SARF"
+    assert abc_teklifi.genel_toplam() == Decimal("120")
+    assert xyz_teklifi.genel_toplam() == Decimal("110")
+
+
+def test_i2(tmp_path):
+    """I2 — TASLAK talepten teklif açılmaz (19b, K2)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    servis.talep_ac("Muhasebe", [
+        {"malzeme_adi": "Defter", "miktar": Decimal("10"), "birim": "adet",
+         "kategori": "SARF"},
+    ], tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.teklif_kaydet("TED-0001", [
+            {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+             "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "19b"
+    assert servis.teklifler == {}
+
+
+def test_i3(tmp_path):
+    """I3 — bağ yarım (talep_no var, talep_kalem_no yok): 19d (E120)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.teklif_kaydet("TED-0001", [
+            {"talep_no": "TLP-0001", "miktar": Decimal("10"),
+             "birim_fiyat": Decimal("12")},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "19d"
+
+
+def test_i4(tmp_path):
+    """I4 — reddedilen tekliften sipariş açılmaz (20b, E122)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    kaydedilen_teklif = servis.teklif_kaydet("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+    servis.teklif_reddet(kaydedilen_teklif.teklif_no, "DAHA_IYI_TEKLIF_VAR",
+                         tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.tekliften_siparis_ac(kaydedilen_teklif.teklif_no,
+                                    tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "20b"
+    assert kaydedilen_teklif.durum == "REDDEDILDI"
+
+
+def test_j1(tmp_path):
+    """J1 — tekliften sipariş: kalemler, fiyatlar ve bağlar kopyalanır (K1, R4).
+
+    Teklif "siparişe dönüştü" sayılır; bu bir durum değil, hesaplanır.
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    kaydedilen_teklif = servis.teklif_kaydet("TED-0002", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("11"),
+         "iskonto_turu": "ORAN", "iskonto_degeri": Decimal("5")},
+    ], tarih=test_tarihi)
+
+    yeni_siparis = servis.tekliften_siparis_ac(kaydedilen_teklif.teklif_no,
+                                               tarih=test_tarihi)
+    siparis_kalemi = yeni_siparis.siparis_kalemleri[0]
+
+    assert yeni_siparis.siparis_no == "SAS-0006"
+    assert yeni_siparis.durum == "TASLAK"
+    assert yeni_siparis.tedarikci_kodu == "TED-0002"
+    assert siparis_kalemi.malzeme_adi == "Defter"
+    assert siparis_kalemi.birim_fiyat == Decimal("11")
+    assert siparis_kalemi.iskonto_degeri == Decimal("5")
+    assert siparis_kalemi.talep_no == "TLP-0001"
+    assert siparis_kalemi.talep_kalem_no == 10
+    assert siparis_kalemi.teklif_no == "TKL-0001"
+    assert siparis_kalemi.teklif_kalem_no == 10
+    assert servis.teklif_siparise_donustu_mu("TKL-0001") is True
+    assert kaydedilen_teklif.durum == "ACIK"
+
+
+def test_j2(tmp_path):
+    """J2 — aynı talep kalemi için ikinci tekliften sipariş: 20c (K3)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    for tedarikci_kodu in ["TED-0001", "TED-0002"]:
+        servis.teklif_kaydet(tedarikci_kodu, [
+            {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+             "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+        ], tarih=test_tarihi)
+    servis.tekliften_siparis_ac("TKL-0001", tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.tekliften_siparis_ac("TKL-0002", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "20c"
+    assert servis.teklif_siparise_donustu_mu("TKL-0002") is False
+
+
+def test_j3(tmp_path):
+    """J3 — talepten doğrudan sipariş: bağlar sipariş kaleminde (E120)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+
+    yeni_siparis = servis.siparis_ac("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 20,
+         "miktar": Decimal("2"), "birim_fiyat": Decimal("250")},
+    ], tarih=test_tarihi)
+    siparis_kalemi = yeni_siparis.siparis_kalemleri[0]
+
+    assert siparis_kalemi.malzeme_adi == "Toner"
+    assert siparis_kalemi.birim == "adet"
+    assert siparis_kalemi.talep_no == "TLP-0001"
+    assert siparis_kalemi.talep_kalem_no == 20
+    assert siparis_kalemi.teklif_no is None
+
+
+def test_j4(tmp_path):
+    """J4 — talebi bölme: kalem 10 → ABC, kalem 20 → XYZ (E120)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+
+    abc_siparisi = servis.siparis_ac("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+    xyz_siparisi = servis.siparis_ac("TED-0002", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 20,
+         "miktar": Decimal("2"), "birim_fiyat": Decimal("250")},
+    ], tarih=test_tarihi)
+
+    assert abc_siparisi.siparis_kalemleri[0].talep_kalem_no == 10
+    assert xyz_siparisi.siparis_kalemleri[0].talep_kalem_no == 20
+    assert abc_siparisi.siparis_kalemleri[0].malzeme_adi == "Defter"
+    assert xyz_siparisi.siparis_kalemleri[0].malzeme_adi == "Toner"
+
+
+def test_j5(tmp_path):
+    """J5 — sipariş iptal edilince teklif yeniden açık, talep kalemi serbest (R4)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    servis.teklif_kaydet("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+    ilk_siparis = servis.tekliften_siparis_ac("TKL-0001", tarih=test_tarihi)
+
+    servis.siparis_iptal_et(ilk_siparis.siparis_no, "VAZGECILDI",
+                            tarih=test_tarihi)
+    ikinci_siparis = servis.tekliften_siparis_ac("TKL-0001", tarih=test_tarihi)
+
+    assert servis.teklif_siparise_donustu_mu("TKL-0001") is True
+    assert ilk_siparis.iptal_bilgisi.iptal_edildi is True
+    assert ikinci_siparis.siparis_no == "SAS-0007"
+    assert ikinci_siparis.siparis_kalemleri[0].talep_kalem_no == 10
+
+
+def test_j6(tmp_path):
+    """J6 — uçtan uca: talep → teklif → sipariş → mal kabul → fatura → ödeme.
+
+    Her adım doğru; ödemeden sonra kalan borç 0 (E120-E123).
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    servis.teklif_kaydet("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+    yeni_siparis = servis.tekliften_siparis_ac("TKL-0001", tarih=test_tarihi)
+    servis.siparis_onayla(yeni_siparis.siparis_no)
+    servis.mal_kabul_kaydet(yeni_siparis.siparis_no, [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("10")},
+    ], tarih=test_tarihi)
+    kaydedilen_fatura = servis.fatura_kaydet(yeni_siparis.siparis_no, "F-2001", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+         "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+
+    kaydedilen_odeme = servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": kaydedilen_fatura.fatura_no, "tutar": Decimal("120")},
+    ], "HAVALE_EFT", tarih=test_tarihi)
+
+    assert kaydedilen_fatura.durum == "ONAYLANDI"
+    assert kaydedilen_odeme.odeme_no == "ODM-0001"
+    assert kaydedilen_odeme.toplam() == Decimal("120")
+    assert servis.fatura_kalan_borc(kaydedilen_fatura.fatura_no) == Decimal("0")
+    assert servis.odeme_bekleyen_faturalari_listele() == []
+
+
+def test_k1(tmp_path):
+    """K1 — ONAYLANDI faturayı tam öde: kalan 0, listeden çıkar (O3, O6)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    kaydedilen_fatura = sas1_faturasi_kur(servis, test_tarihi)
+    assert servis.odeme_bekleyen_faturalari_listele() == [kaydedilen_fatura]
+
+    servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": "FTR-0001", "tutar": Decimal("2000")},
+    ], "HAVALE_EFT", tarih=test_tarihi)
+
+    assert servis.fatura_kalan_borc("FTR-0001") == Decimal("0")
+    assert servis.odeme_bekleyen_faturalari_listele() == []
+
+
+def test_k2(tmp_path):
+    """K2 — kısmi ödeme: 2000'in 600'ü; kalan 1400, listede kalır (O3)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    kaydedilen_fatura = sas1_faturasi_kur(servis, test_tarihi)
+
+    servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": "FTR-0001", "tutar": Decimal("600")},
+    ], "NAKIT", tarih=test_tarihi)
+
+    assert servis.fatura_kalan_borc("FTR-0001") == Decimal("1400")
+    assert servis.odeme_bekleyen_faturalari_listele() == [kaydedilen_fatura]
+
+
+def test_k3(tmp_path):
+    """K3 — kalan borcu aşan ödeme: 23e; ödeme oluşmaz (O3, O4)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    sas1_faturasi_kur(servis, test_tarihi)
+    servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": "FTR-0001", "tutar": Decimal("600")},
+    ], "NAKIT", tarih=test_tarihi)
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.odeme_kaydet("TED-0001", [
+            {"fatura_no": "FTR-0001", "tutar": Decimal("1400.01")},
+        ], "NAKIT", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "23e"
+    assert list(servis.odemeler) == ["ODM-0001"]
+
+
+def test_k4(tmp_path):
+    """K4 — BLOKE fatura ödenmez (23c); serbest bırakılınca ödenir (O1)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    kaydedilen_fatura = sas1_faturasi_kur(servis, test_tarihi,
+                                          k10_fiyati=Decimal("103"))
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.odeme_kaydet("TED-0001", [
+            {"fatura_no": "FTR-0001", "tutar": Decimal("100")},
+        ], "NAKIT", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "23c"
+
+    servis.serbest_birak("FTR-0001", "FIYAT_FARKI_ONAYLANDI", tarih=test_tarihi)
+    servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": "FTR-0001", "tutar": Decimal("2030")},
+    ], "NAKIT", tarih=test_tarihi)
+
+    assert kaydedilen_fatura.durum == "SERBEST"
+    assert servis.fatura_kalan_borc("FTR-0001") == Decimal("0")
+
+
+def test_k5(tmp_path):
+    """K5 — başka tedarikçinin faturası ödenmez: 23d (O2)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    sas1_faturasi_kur(servis, test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.odeme_kaydet("TED-0002", [
+            {"fatura_no": "FTR-0001", "tutar": Decimal("100")},
+        ], "NAKIT", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "23d"
+
+
+def test_k6(tmp_path):
+    """K6 — tek ödemeyle aynı tedarikçinin iki faturası kapanır (O2)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    sas1_faturasi_kur(servis, test_tarihi)
+    servis.mal_kabul_kaydet("SAS-0002", [
+        {"siparis_kalem_no": 10, "gelen_miktar": Decimal("100")},
+    ], tarih=test_tarihi)
+    servis.fatura_kaydet("SAS-0002", "F-1002", [
+        {"siparis_kalem_no": 10, "miktar": Decimal("100"),
+         "birim_fiyat": Decimal("20")},
+    ], tarih=test_tarihi)
+
+    kaydedilen_odeme = servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": "FTR-0001", "tutar": Decimal("2000")},
+        {"fatura_no": "FTR-0002", "tutar": Decimal("2000")},
+    ], "HAVALE_EFT", tarih=test_tarihi)
+
+    assert kaydedilen_odeme.toplam() == Decimal("4000")
+    assert kaydedilen_odeme.odeme_kalemleri[1].kalem_no == 20
+    assert servis.fatura_kalan_borc("FTR-0001") == Decimal("0")
+    assert servis.fatura_kalan_borc("FTR-0002") == Decimal("0")
+
+
+def test_l1(tmp_path):
+    """L1 — ödenmiş fatura iptal edilmez (9c); ödeme iptal edilince edilir (O5)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    kaydedilen_fatura = sas1_faturasi_kur(servis, test_tarihi)
+    kaydedilen_odeme = servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": "FTR-0001", "tutar": Decimal("600")},
+    ], "NAKIT", tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.fatura_iptal_et("FTR-0001", "MUKERRER_GIRIS", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "9c"
+
+    servis.odeme_iptal_et(kaydedilen_odeme.odeme_no, "TUTAR_YANLIS_GIRILDI",
+                          tarih=test_tarihi)
+    servis.fatura_iptal_et("FTR-0001", "MUKERRER_GIRIS", tarih=test_tarihi)
+
+    assert kaydedilen_odeme.iptal_bilgisi.iptal_edildi is True
+    assert kaydedilen_fatura.iptal_bilgisi.iptal_edildi is True
+
+
+def test_l2(tmp_path):
+    """L2 — bağlı teklifi olan talep iptal edilmez: 22a (R3)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    servis.teklif_kaydet("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.talep_iptal_et("TLP-0001", "VAZGECILDI", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "22a"
+
+
+def test_l3(tmp_path):
+    """L3 — bağlı siparişi olan teklif iptal edilmez: 22b (R3)."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    servis.teklif_kaydet("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+    servis.tekliften_siparis_ac("TKL-0001", tarih=test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.teklif_iptal_et("TKL-0001", "MUKERRER_GIRIS", tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "22b"
+
+
+def test_m1(tmp_path):
+    """M1 — sürüm 1 dosyası açılınca sürüm 2'ye dönüştürülür (E120, E131).
+
+    Ortak test verisi kurulur, dosya elle sürüm 1 hâline getirilir (v1a'nın
+    yazdığı şekil): talep, teklif, ödeme listeleri ve sayaçları ile sipariş
+    kalemlerinin dört bağ alanı silinir. Servis açılınca surum_1den_2ye
+    çalışır: sürüm 2, yeni listeler boş, eski belgeler aynen, sayaçlar devam.
+    """
+    veri_dosyasi = tmp_path / "veri.json"
+    baslangic_verisini_kur(veri_dosyasi)
+    test_tarihi = "2026-11-02"
+    ham_veri = json.loads(veri_dosyasi.read_text(encoding="utf-8"))
+    ham_veri["veri_surumu"] = 1
+    del ham_veri["talepler"]
+    del ham_veri["teklifler"]
+    del ham_veri["odemeler"]
+    del ham_veri["sayaclar"]["TLP"]
+    del ham_veri["sayaclar"]["TKL"]
+    del ham_veri["sayaclar"]["ODM"]
+    for siparis in ham_veri["siparisler"]:
+        for siparis_kalemi in siparis["siparis_kalemleri"]:
+            del siparis_kalemi["talep_no"]
+            del siparis_kalemi["talep_kalem_no"]
+            del siparis_kalemi["teklif_no"]
+            del siparis_kalemi["teklif_kalem_no"]
+    veri_dosyasi.write_text(json.dumps(ham_veri), encoding="utf-8")
+
+    yeni_servis = SatinAlmaServisi(veri_dosyasi)
+    yeni_talep = yeni_servis.talep_ac("Muhasebe", [
+        {"malzeme_adi": "Defter", "miktar": Decimal("10"), "birim": "adet",
+         "kategori": "SARF"},
+    ], tarih=test_tarihi)
+    yeni_siparis = yeni_servis.siparis_ac("TED-0001", [
+        {"malzeme_adi": "A4 kağıt", "miktar": Decimal("1"), "birim": "adet",
+         "birim_fiyat": Decimal("100"), "kategori": "SARF"},
+    ], tarih=test_tarihi)
+
+    assert yeni_servis.veri_surumu == 2
+    assert yeni_servis.teklifler == {}
+    assert yeni_servis.odemeler == {}
+    assert len(yeni_servis.siparisler) == 6
+    assert yeni_servis.siparis_bul("SAS-0001").siparis_kalemleri[0].malzeme_adi == "A4 kağıt"
+    assert yeni_servis.siparis_bul("SAS-0001").siparis_kalemleri[0].talep_no is None
+    assert yeni_servis.siparis_bul("SAS-0001").siparis_kalemleri[0].teklif_kalem_no is None
+    assert yeni_talep.talep_no == "TLP-0001"
+    assert yeni_siparis.siparis_no == "SAS-0006"
+
+
+def test_m2(tmp_path):
+    """M2 — kapat-aç: talep, teklif ve ödeme geri gelir, sayaçlar devam eder (F1 kalıbı)."""
+    veri_dosyasi = tmp_path / "veri.json"
+    servis = baslangic_verisini_kur(veri_dosyasi)
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    servis.teklif_kaydet("TED-0001", [
+        {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+         "miktar": Decimal("10"), "birim_fiyat": Decimal("12")},
+    ], tarih=test_tarihi)
+    sas1_faturasi_kur(servis, test_tarihi)
+    servis.odeme_kaydet("TED-0001", [
+        {"fatura_no": "FTR-0001", "tutar": Decimal("600")},
+    ], "NAKIT", tarih=test_tarihi)
+
+    yeni_servis = SatinAlmaServisi(veri_dosyasi)
+    yeni_talep = yeni_servis.talep_ac("Depo", [
+        {"malzeme_adi": "Kalem", "miktar": Decimal("1"), "birim": "adet",
+         "kategori": "SARF"},
+    ], tarih=test_tarihi)
+
+    assert yeni_servis.talep_bul("TLP-0001").durum == "ONAYLANDI"
+    assert yeni_servis.teklif_bul("TKL-0001").teklif_kalemleri[0].talep_no == "TLP-0001"
+    assert yeni_servis.odeme_bul("ODM-0001").toplam() == Decimal("600")
+    assert yeni_servis.fatura_kalan_borc("FTR-0001") == Decimal("1400")
+    assert yeni_talep.talep_no == "TLP-0002"
+
+
+# ---------------------------------------------------------------------------
+# Denetim bulguları (E126): B5, B6, B8, B10
+# ---------------------------------------------------------------------------
+
+def test_denetim_b5(tmp_path):
+    """B5 — sipariş miktarı talep miktarını aşamaz: 20g."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+
+    with pytest.raises(IslemYapilamazError) as hata_bilgisi:
+        servis.siparis_ac("TED-0001", [
+            {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+             "miktar": Decimal("11"), "birim_fiyat": Decimal("12")},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "20g"
+
+
+def test_denetim_b6(tmp_path):
+    """B6 — bağlı kalemde malzeme / birim / kategori ayrıca verilmez: 20h ve 19e."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    bagli_kalem = {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+                   "miktar": Decimal("10"), "birim_fiyat": Decimal("12"),
+                   "birim": "kg"}
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.siparis_ac("TED-0001", [bagli_kalem], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "20h"
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.teklif_kaydet("TED-0001", [bagli_kalem], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "19e"
+
+
+def test_denetim_b8(tmp_path):
+    """B8 — miktar ve fiyat Decimal olmalı: 2d, 4e, 5f."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.siparis_ac("TED-0001", [
+            {"malzeme_adi": "A4 kağıt", "miktar": 10, "birim": "adet",
+             "birim_fiyat": Decimal("100"), "kategori": "SARF"},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "2d"
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.mal_kabul_kaydet("SAS-0001", [
+            {"siparis_kalem_no": 10, "gelen_miktar": "10"},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "4e"
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.fatura_kaydet("SAS-0001", "F-1001", [
+            {"siparis_kalem_no": 10, "miktar": Decimal("10"),
+             "birim_fiyat": 100.0},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "5f"
+
+
+def test_denetim_b10(tmp_path):
+    """B10 — aynı belgede aynı talep kalemi ikinci satırda: 20i ve 19f."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onayli_talep_kur(servis, test_tarihi)
+    bagli_kalem = {"talep_no": "TLP-0001", "talep_kalem_no": 10,
+                   "miktar": Decimal("5"), "birim_fiyat": Decimal("12")}
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.siparis_ac("TED-0001", [bagli_kalem, bagli_kalem],
+                          tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "20i"
+
+    with pytest.raises(GecersizGirisError) as hata_bilgisi:
+        servis.teklif_kaydet("TED-0001", [bagli_kalem, bagli_kalem],
+                             tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "19f"
+
+
+def test_denetim_b4(tmp_path, monkeypatch):
+    """B4 — kayıt hata verince bellek dosyadan geri yüklenir: 10b.
+
+    Diske yazma sahte kaydet ile bozulur (disk dolu taklidi). Sipariş
+    açılırken _kaydet hatayı yakalar, belleği dosyadan yeniden yükler ve
+    hatayı iletir: bellekte hayalet sipariş ya da artmış sayaç kalmaz.
+    Sahte kaldırılınca açılan sipariş yine SAS-0006 alır (numara boşa
+    gitmez).
+    """
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+    test_tarihi = "2026-11-02"
+    onceki_siparis_sayisi = len(servis.siparisler)
+    onceki_sas_sayaci = servis.sayaclar["SAS"]
+
+    def sahte_kaydet(veri, dosya_yolu):
+        """Disk dolu taklidi: her çağrıda 10b atar."""
+        raise DepolamaError("Kaydedilemedi: disk dolu (test)", kod="10b")
+
+    monkeypatch.setattr("servis.kaydet", sahte_kaydet)
+
+    with pytest.raises(DepolamaError) as hata_bilgisi:
+        servis.siparis_ac("TED-0001", [
+            {"malzeme_adi": "A4 kağıt", "miktar": Decimal("10"),
+             "birim": "adet", "birim_fiyat": Decimal("100"),
+             "kategori": "SARF"},
+        ], tarih=test_tarihi)
+    assert hata_bilgisi.value.kod == "10b"
+    assert len(servis.siparisler) == onceki_siparis_sayisi
+    assert servis.sayaclar["SAS"] == onceki_sas_sayaci
+
+    monkeypatch.undo()
+    siparis = servis.siparis_ac("TED-0001", [
+        {"malzeme_adi": "A4 kağıt", "miktar": Decimal("10"),
+         "birim": "adet", "birim_fiyat": Decimal("100"),
+         "kategori": "SARF"},
+    ], tarih=test_tarihi)
+    assert siparis.siparis_no == "SAS-0006"
+
+
+def test_denetim_b3(tmp_path, monkeypatch):
+    """B3 — güvenli yazma: os.replace hata verince eski dosya bozulmaz: 10b.
+
+    Diskte 5 siparişli veri durur; üstüne boş veri yazılmak istenir.
+    Geçici dosyayı asıl dosyanın yerine koyan os.replace sahteyle bozulur.
+    kaydet hatayı yakalar, geçici dosyayı siler, DepolamaError (10b) atar:
+    asıl dosya hatadan önceki içeriğiyle aynı kalır, .tmp diskte kalmaz.
+    """
+    dosya_yolu = tmp_path / "veri.json"
+    baslangic_verisini_kur(dosya_yolu)
+    onceki_icerik = dosya_yolu.read_text(encoding="utf-8")
+
+    def sahte_replace(kaynak, hedef):
+        """Disk hatası taklidi: her çağrıda OSError atar."""
+        raise OSError("Yer değiştirilemedi (test)")
+
+    monkeypatch.setattr("os.replace", sahte_replace)
+
+    with pytest.raises(DepolamaError) as hata_bilgisi:
+        kaydet(bos_veri_olustur(), dosya_yolu)
+    assert hata_bilgisi.value.kod == "10b"
+    assert dosya_yolu.read_text(encoding="utf-8") == onceki_icerik
+    assert not (tmp_path / "veri.json.tmp").exists()
+
+
+def test_denetim_e132_bulunamadi_mesaji(tmp_path):
+    """E132 bulgu 3 — bulunamadı mesajı kaydın türünü söyler; boş numarada "girilmedi"."""
+    servis = baslangic_verisini_kur(tmp_path / "veri.json")
+
+    with pytest.raises(KayitBulunamadiError) as hata_bilgisi:
+        servis.siparis_bul("SAS-0099")
+    assert str(hata_bilgisi.value) == "Sipariş bulunamadı: SAS-0099"
+    assert hata_bilgisi.value.kod == "27a"
+
+    with pytest.raises(KayitBulunamadiError) as hata_bilgisi:
+        servis.fatura_bul("")
+    assert str(hata_bilgisi.value) == "Fatura numarası girilmedi"
+
+    with pytest.raises(KayitBulunamadiError) as hata_bilgisi:
+        servis.siparis_onayla("12")
+    assert str(hata_bilgisi.value) == "Sipariş bulunamadı: 12"
+    assert hata_bilgisi.value.kod == "3a"
